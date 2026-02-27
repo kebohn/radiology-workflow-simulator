@@ -1,0 +1,56 @@
+services:
+  orthanc:
+    image: "${ORTHANC_IMAGE:-orthanc-example-orthanc:local}"
+    command: /run/secrets/orthanc.json
+    # IMPORTANT: Do not expose Orthanc publicly on a central server.
+    ports:
+      - "127.0.0.1:4242:4242"
+      - "127.0.0.1:8042:8042"
+    environment:
+      ORTHANC_NAME: "ORTHANC"
+    volumes:
+      - orthanc_db:/var/lib/orthanc/db
+      - worklists:/var/lib/orthanc/worklists
+    restart: unless-stopped
+
+  simulator:
+    image: "${SIMULATOR_IMAGE:-orthanc-example-simulator:local}"
+    expose:
+      - "5000"
+    volumes:
+      - worklists:/app/worklists
+      - simulator_data:/app/data
+    environment:
+      ORTHANC_url: "http://orthanc:8042"
+      ORTHANC_DICOM_HOST: "orthanc"
+      ORTHANC_DICOM_PORT: "4242"
+      AUTO_GENERATE_SESSIONS: "${AUTO_GENERATE_SESSIONS:-20}"
+      FLASK_SECRET_KEY: "${FLASK_SECRET_KEY}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      ORTHANC_PUBLIC_URL: "${ORTHANC_PUBLIC_URL}"
+    depends_on:
+      - orthanc
+    restart: unless-stopped
+
+  caddy:
+    image: "${CADDY_IMAGE:-orthanc-example-caddy:local}"
+    ports:
+      - "80:80"
+      # Enable HTTPS by switching to a real domain and uncommenting the next line
+      # - "443:443"
+    environment:
+      CADDY_HOST: "${CADDY_HOST:-:80}"
+      # CADDY_EMAIL: "${CADDY_EMAIL:-}"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - simulator
+    restart: unless-stopped
+
+volumes:
+  orthanc_db:
+  worklists:
+  simulator_data:
+  caddy_data:
+  caddy_config:

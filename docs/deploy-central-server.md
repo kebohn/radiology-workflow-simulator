@@ -39,7 +39,9 @@ Variante A (simpel): per Git clone
 
 Variante B (besser): Prebuilt Images (z.B. GHCR)
 
-Du kannst den Simulator als vorgebautes Image betreiben, damit der Server nichts kompilieren/bauen muss.
+Du kannst die komplette Architektur (Orthanc + Simulator + Caddy) als Images betreiben, damit der Server nichts kompilieren/bauen muss.
+In diesem Repo gibt es dafür ein Compose-File ohne `build:` und ohne lokale Config-Bind-Mounts:
+- [docker-compose.images.yml](docker-compose.images.yml)
 
 ## Schritt 3: Secrets/Env setzen
 
@@ -78,7 +80,7 @@ ssh -L 8042:127.0.0.1:8042 user@SERVER
 
 Dann lokal im Browser: `http://localhost:8042` (Login: `trainer` / `trainer123`).
 
-## Parameter-Ueberblick (Server)
+## Parameter-Überblick (Server)
 
 Auf dem Server im Repo-Ordner eine `.env` anlegen (siehe auch `.env.server.example`):
 - `FLASK_SECRET_KEY` (Pflicht)
@@ -86,42 +88,83 @@ Auf dem Server im Repo-Ordner eine `.env` anlegen (siehe auch `.env.server.examp
 - `AUTO_GENERATE_SESSIONS` (optional, Default 20)
 - `ORTHANC_PUBLIC_URL` (optional, auf Server meist leer)
 
-Optional (wenn du den Simulator als Image betreibst):
-- `SIMULATOR_IMAGE` (z.B. `ghcr.io/<owner>/<repo>-simulator:latest`)
+Zusätzlich (wenn du den Stack komplett als Images betreibst):
+- `ORTHANC_IMAGE`, `SIMULATOR_IMAGE`, `CADDY_IMAGE`
+- `CADDY_HOST` (z.B. `:80` oder `sim.example.org`)
 
-## Optional: Prebuilt Simulator Image (kein Build auf dem Server)
+## Prebuilt Images (kein Build auf dem Server)
 
-Wenn der Server nicht bauen soll oder das Build lange dauert, kannst du den Simulator als Image bauen und in eine Registry pushen (z.B. GHCR). Der Server zieht dann nur noch das Image.
+### Schritt A: Images bauen und nach GHCR pushen (lokal)
 
-1. In deiner Server-`.env` zusätzlich setzen:
+Beispiel: Du willst alles nach GHCR pushen und die Packages sind auf "Public" gestellt.
 
-```
-SIMULATOR_IMAGE=ghcr.io/<owner>/<repo>-simulator:latest
-```
-
-2. Image bauen und pushen (lokal oder in einer CI), Beispiel lokal:
+1) Login:
 
 ```
 docker login ghcr.io
+```
+
+2) Tags setzen:
+
+```
+export OWNER_REPO="<owner>/<repo>"  # z.B. kebohn/radiology-workflow-simulator
+export TAG="latest"
+```
+
+3) Orthanc (mit `orthanc.json` im Image):
+
+```
 docker buildx build --platform linux/amd64 \
-   -t ghcr.io/<owner>/<repo>-simulator:latest \
+   -t ghcr.io/$OWNER_REPO-orthanc:$TAG \
+   --push ./orthanc
+```
+
+4) Simulator:
+
+```
+docker buildx build --platform linux/amd64 \
+   -t ghcr.io/$OWNER_REPO-simulator:$TAG \
    --push ./simulator
 ```
 
-Wenn das Image public ist, braucht der Server kein `docker login` zum Pullen.
-
-3. Deploy ohne Build:
+5) Caddy (mit env-basiertem Caddyfile im Image):
 
 ```
-docker compose -f docker-compose.server.yml pull simulator
-docker compose -f docker-compose.server.yml up -d --no-build
+docker buildx build --platform linux/amd64 \
+   -t ghcr.io/$OWNER_REPO-caddy:$TAG \
+   --push ./deploy/caddy
 ```
 
-Hinweis: Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) ist aktuell ein Build-Test (build-only) und pusht nichts nach GHCR.
+### Schritt B: Server starten (nur pull + up)
+
+1) `.env` auf dem Server anlegen (siehe `.env.server.example`) und Images setzen:
+
+```
+ORTHANC_IMAGE=ghcr.io/<owner>/<repo>-orthanc:latest
+SIMULATOR_IMAGE=ghcr.io/<owner>/<repo>-simulator:latest
+CADDY_IMAGE=ghcr.io/<owner>/<repo>-caddy:latest
+
+FLASK_SECRET_KEY=...
+ADMIN_PASSWORD=...
+AUTO_GENERATE_SESSIONS=20
+ORTHANC_PUBLIC_URL=
+
+# HTTP: :80 oder HTTPS: sim.example.org
+CADDY_HOST=:80
+```
+
+2) Start:
+
+```
+docker compose -f docker-compose.images.yml pull
+docker compose -f docker-compose.images.yml up -d
+```
+
+Hinweis: Wenn die Images public sind, braucht der Server kein `docker login` zum Pullen.
 
 ## CI: Build-Only Workflow (Smoke Test)
 
-Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) baut bei Push/PR (nur wenn sich `simulator/**` ändert) das Docker Image als schnellen Smoke Test. Er benötigt keine Secrets.
+Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) läuft bei Push/PR und baut das Simulator-Image als Smoke Test. Er benötigt keine Secrets und pusht nichts nach GHCR.
 
 ## Betrieb für SuS (wichtig)
 
