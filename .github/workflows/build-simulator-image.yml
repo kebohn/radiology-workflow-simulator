@@ -3,13 +3,7 @@ name: Build simulator image
 on:
   push:
     branches: ["main", "master"]
-    paths:
-      - "simulator/**"
-      - ".github/workflows/build-simulator-image.yml"
   pull_request:
-    paths:
-      - "simulator/**"
-      - ".github/workflows/build-simulator-image.yml"
   workflow_dispatch: {}
 
 jobs:
