@@ -2,7 +2,7 @@ name: Deploy (central server)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   workflow_dispatch: {}
 
 jobs:
@@ -43,8 +43,8 @@ jobs:
 
             cd "$APP_DIR"
             git fetch --all --prune
-            git checkout main
-            git pull --ff-only
+            BRANCH="${{ github.ref_name }}"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
 
             # Ensure .env exists (FLASK_SECRET_KEY required)
             if [ ! -f .env ]; then
