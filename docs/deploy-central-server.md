@@ -79,26 +79,39 @@ Dann lokal im Browser: `http://localhost:8042` (Login: `trainer` / `trainer123`)
 
 ## GitHub Actions (Deploy über GitHub)
 
-Einfacher Workflow:
-- Action baut ein Image und pushed nach GHCR
-- Server zieht das Image und startet Compose neu
+Dieses Repo enthält einen Deploy-Workflow: [.github/workflows/deploy-central-server.yml](.github/workflows/deploy-central-server.yml)
 
-Minimal-Ansatz (Pseudo-Schritte):
-1. GitHub Repo Settings:
-   - Secrets: `SERVER_SSH_KEY`, `SERVER_HOST`, `SERVER_USER`
-   - Optional: `GHCR_IMAGE` (oder hart codieren)
-2. Action:
-   - `docker build` / `docker push` nach `ghcr.io/<org>/<repo>:latest`
-   - per SSH:
-     - `docker login ghcr.io`
-     - `docker compose -f docker-compose.server.yml pull`
-     - `docker compose -f docker-compose.server.yml up -d`
+Er macht per SSH auf dem Server:
+- Repo klonen (falls noch nicht vorhanden)
+- `git fetch` + Checkout des Branches, der den Run ausgelöst hat
+- `docker compose -f docker-compose.server.yml up -d --build`
 
-Dieses Repo enthält bereits einen einfachen Workflow: [.github/workflows/deploy-central-server.yml](.github/workflows/deploy-central-server.yml)
+### GitHub Actions: Parameter setzen
+
+In GitHub: Repo → Settings → Secrets and variables → Actions
+
+Pflicht (Secrets oder Variables):
+- `SERVER_HOST` (Host oder IP, z.B. `sim.example.org`)
+- `SERVER_USER` (z.B. `ubuntu`)
+- `SERVER_APP_DIR` (z.B. `/opt/orthanc-example`)
+
+Pflicht (nur Secret):
+- `SERVER_SSH_KEY` (Private Key, ed25519)
+
+Optional (Secret oder Variable):
+- `SERVER_PORT` (Default: `22`)
+
+### Server: Parameter setzen
+
+Auf dem Server im Repo-Ordner eine `.env` anlegen (siehe auch `.env.server.example`):
+- `FLASK_SECRET_KEY` (Pflicht)
+- `ADMIN_PASSWORD` (Pflicht, aktiviert `/admin`)
+- `AUTO_GENERATE_SESSIONS` (optional, Default 20)
+- `ORTHANC_PUBLIC_URL` (optional, auf Server meist leer)
 
 ## Optional: Prebuilt Simulator Image (kein Build auf dem Server)
 
-Wenn der Server keine Build-Tools haben soll oder das Build lange dauert, kannst du den Simulator als Image bauen und in eine Registry pushen (z.B. GHCR). Der Server zieht dann nur noch das Image.
+Wenn der Server nicht bauen soll oder das Build lange dauert, kannst du den Simulator als Image bauen und in eine Registry pushen (z.B. GHCR). Der Server zieht dann nur noch das Image.
 
 1. In deiner Server-`.env` zusätzlich setzen:
 
@@ -106,11 +119,16 @@ Wenn der Server keine Build-Tools haben soll oder das Build lange dauert, kannst
 SIMULATOR_IMAGE=ghcr.io/<owner>/<repo>-simulator:latest
 ```
 
-2. (Falls Repo/Package privat) einmalig auf dem Server bei GHCR einloggen:
+2. Image bauen und pushen (lokal oder in einer CI), Beispiel lokal:
 
 ```
-echo "<TOKEN>" | docker login ghcr.io -u "<USERNAME>" --password-stdin
+docker login ghcr.io
+docker buildx build --platform linux/amd64 \
+   -t ghcr.io/<owner>/<repo>-simulator:latest \
+   --push ./simulator
 ```
+
+Wenn das Image public ist, braucht der Server kein `docker login` zum Pullen.
 
 3. Deploy ohne Build:
 
@@ -119,7 +137,11 @@ docker compose -f docker-compose.server.yml pull simulator
 docker compose -f docker-compose.server.yml up -d --no-build
 ```
 
-Hinweis: Im Repo gibt es einen Build-Workflow, der das Simulator-Image nach GHCR pushed: [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml)
+Hinweis: Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) ist aktuell ein Build-Test (build-only) und pusht nichts nach GHCR.
+
+## CI: Build-Only Workflow (Smoke Test)
+
+Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) baut bei Push/PR (nur wenn sich `simulator/**` aendert) das Docker Image als schnellen Smoke Test. Er benoetigt keine Secrets.
 
 ### Nötige GitHub Secrets
 
