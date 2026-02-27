@@ -1,3 +1,4 @@
 orthanc-db/*
 worklists/*
 simulator-data/*
+.env
