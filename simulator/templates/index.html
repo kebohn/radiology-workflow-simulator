@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <title>Radiologie Workflow Simulator</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .section { background: #f0f0f0; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        .workflow { background: #fff; border: 1px solid #cfd8dc; padding: 12px; margin-bottom: 20px; border-radius: 5px; }
+        .workflow small { color: #546e7a; }
+        .workflow-steps { color: #546e7a; font-weight: 400; font-size: 0.85em; }
+        .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+        .workflow-diagram svg { width: 100%; height: 100%; }
+        .workflow-drawer-toggle { position: absolute; left: -9999px; }
+        .workflow-drawer-button {
+            position: fixed;
+            right: 0;
+            top: 140px;
+            z-index: 100;
+            background: #fff;
+            border: 1px solid #cfd8dc;
+            border-right: none;
+            padding: 10px 12px;
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .workflow-drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            height: 100vh;
+                width: min(520px, 90vw);
+            z-index: 99;
+            background: #fff;
+            border-left: 1px solid #cfd8dc;
+            padding: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(105%);
+            transition: transform 160ms ease-in-out;
+        }
+        .workflow-drawer header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid #eceff1;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+            flex: 0 0 auto;
+        }
+        .workflow-drawer-title { font-weight: 700; }
+        .workflow-drawer-close {
+            cursor: pointer;
+            border: 1px solid #cfd8dc;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #fff;
+        }
+        #workflowDrawer:checked ~ .workflow-drawer { transform: translateX(0); }
+        h2 { margin-top: 0; }
+        label { display: block; margin-bottom: 5px; }
+        input { margin-bottom: 10px; width: 100%; padding: 8px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 15px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .success { color: green; font-weight: bold; padding: 10px; background: #e8f5e9; border: 1px solid green; margin-bottom: 20px;}
+        .protocol-note { font-size: 0.85em; color: #666; font-style: italic; margin-top: 5px; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+            mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+    </script>
+        <script>
+            document.addEventListener('DOMContentLoaded', () => {
+                const checkbox = document.getElementById('workflowDrawer');
+                if (!checkbox) return;
+                const storageKey = 'workflowDrawerOpen';
+                checkbox.checked = localStorage.getItem(storageKey) === '1';
+                checkbox.addEventListener('change', () => {
+                    localStorage.setItem(storageKey, checkbox.checked ? '1' : '0');
+                });
+            });
+        </script>
+        <script>
+            function renderWorkflow(activeNode, nextNode) {
+                const base = document.getElementById('workflowGraphBase');
+                const mermaidDiv = document.getElementById('workflowMermaid');
+                if (!base || !mermaidDiv || !window.mermaid) return;
+
+                let highlight = '';
+                if (activeNode) highlight += `\n  class ${activeNode} active`;
+                if (nextNode) highlight += `\n  class ${nextNode} next`;
+
+                mermaidDiv.removeAttribute('data-processed');
+                mermaidDiv.innerHTML = base.innerHTML.trim() + highlight + "\n";
+
+                try {
+                    if (typeof window.mermaid.run === 'function') {
+                        window.mermaid.run({ nodes: [mermaidDiv] });
+                    } else if (typeof window.mermaid.init === 'function') {
+                        window.mermaid.init(undefined, mermaidDiv);
+                    }
+                } catch (e) {
+                    // Ignore rendering errors; the UI still works without the diagram.
+                }
+            }
+
+            function setWorkflowUi(currentText, nextText, activeNode, nextNode) {
+                const steps = document.getElementById('workflowSteps');
+                if (steps) {
+                    steps.textContent = `Aktuell: ${currentText || '—'} | Als nächstes: ${nextText || '—'}`;
+                }
+                renderWorkflow(activeNode, nextNode);
+            }
+        </script>
+</head>
+<body>
+    <h1>Radiologie Workflow Simulator</h1>
+
+    <div class="section">
+        <h2>SuS Session (zentraler Server)</h2>
+        <p class="protocol-note">Setzen Sie hier Ihren SuS-Code. Dann werden PID/Accession intern mit diesem Prefix versehen und die Workstation zeigt standardmässig nur Studien mit diesem Prefix (soft isolation).</p>
+        <form action="/set_student" method="post" style="display:flex; gap:10px; align-items:flex-start;">
+            <input type="text" name="student_code" placeholder="z.B. SUS17" value="{{ student_code }}" style="margin-bottom:0;">
+            <button type="submit" style="white-space:nowrap;">SuS-Code setzen</button>
+        </form>
+        {% if student_code %}
+        <form action="/clear_student" method="post" style="margin-top:8px;">
+            <button type="submit" style="background:#757575;">SuS-Code löschen</button>
+        </form>
+        {% endif %}
+    </div>
+    
+    {% if msg %}
+    <div class="success">{{ msg }}</div>
+    {% endif %}
+
+    <input id="workflowDrawer" class="workflow-drawer-toggle" type="checkbox">
+    <label class="workflow-drawer-button" for="workflowDrawer">Workflow</label>
+    <aside class="workflow-drawer" aria-label="Workflow">
+        <header>
+            <div>
+                <div class="workflow-drawer-title">Workflow</div>
+                                <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
+                                            <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
+            </div>
+            <label class="workflow-drawer-close" for="workflowDrawer">Schliessen</label>
+        </header>
+        <div class="workflow-diagram">
+                        <template id="workflowGraphBase">
+flowchart TB
+    classDef system fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
+    classDef backend fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000
+    classDef hl7 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
+    classDef dicom fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef active stroke:#000,stroke-width:4px
+    classDef next stroke-dasharray: 6 3
+
+    KIS["KIS"]
+    RIS["RIS"]
+    LIS["LIS"]
+    MWLServer["MWL"]
+    Modality["CT"]
+    PACS["PACS"]
+    Workstation["Workstation"]
+
+    ADT["HL7 ADT"]
+    ORU["HL7 ORU"]
+    ORM["HL7 ORM"]
+    MWL["DICOM C-FIND (MWL)"]
+    STORE["DICOM C-STORE"]
+    QFIND["DICOM C-FIND (Study)"]
+    CMOVE["DICOM C-MOVE"]
+
+    class KIS,RIS,LIS,Modality,Workstation system
+    class MWLServer,PACS backend
+    class ADT,ORU,ORM hl7
+    class MWL,STORE,QFIND,CMOVE dicom
+
+    KIS -.-> ADT -.-> RIS
+    RIS -.-> ORU -.-> LIS
+    RIS -.-> ORM -.-> MWLServer
+    MWLServer --> MWL --> Modality
+    Modality --> STORE --> PACS
+    Workstation --> QFIND --> PACS
+    Workstation --> CMOVE --> PACS
+                        </template>
+
+                        <div id="workflowMermaid" class="mermaid"></div>
+
+                        <script type="application/json" id="workflowStateJson">{{ {'current': workflow_current or '', 'next': workflow_next or ''}|tojson }}</script>
+                        <script>
+                            document.addEventListener('DOMContentLoaded', () => {
+                                const stateEl = document.getElementById('workflowStateJson');
+                                const state = stateEl ? JSON.parse(stateEl.textContent || '{}') : { current: '', next: '' };
+                                const cur = String(state.current || '');
+                                const nxt = String(state.next || '');
+
+                                if (cur.includes('LIS') || cur.includes('ORU') || cur.toLowerCase().includes('kreatinin')) {
+                                    setWorkflowUi(cur || '—', nxt || '—', 'ORU', 'ORM');
+                                } else if (cur.includes('RIS') || cur.includes('ORM') || cur.toLowerCase().includes('auftrag')) {
+                                    setWorkflowUi(cur || '—', nxt || '—', 'ORM', 'MWL');
+                                } else {
+                                    setWorkflowUi(cur || '—', nxt || '—', 'ADT', 'ORU');
+                                }
+                            });
+                        </script>
+        </div>
+        <small>Hinweis: Das Diagramm wird im Browser gerendert (Mermaid). Wenn Sie offline sind, kann es sein, dass das Diagramm nicht angezeigt wird.</small>
+    </aside>
+
+    <div class="section">
+        <h2>System-Check (DICOM C-ECHO)</h2>
+        <p>Prüfen Sie, ob das PACS erreichbar ist ("Ping").</p>
+        <form action="/echo" method="post">
+            <button type="submit" style="background: #28a745;">Verbindung testen (C-ECHO)</button>
+        </form>
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund:</strong> Der <code>DICOM C-ECHO</code> Dienste ("Verification Service Class") wird verwendet, um die TCP/IP-Verbindung und die DICOM-Aushandlung (Association) zu testen. Das ist oft der erste Schritt bei der Fehlersuche.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>1. Verwaltung (HL7): KIS, LIS, RIS</h2>
+        <p>In der Praxis sind <strong>KIS</strong> (Patientenaufnahme), <strong>LIS</strong> (Labor) und <strong>RIS</strong> (Radiologie-Auftrag) getrennte Systeme. Hier sind sie in einem Dashboard gebündelt, aber als Schritte getrennt.</p>
+        
+        <script>
+        async function checkLis() {
+            const pid = document.getElementById('pidInput').value;
+            const statusDiv = document.getElementById('lisStatus');
+            const hl7Div = document.getElementById('lisHl7');
+            
+            if(!pid) { alert("Bitte erst eine PID eingeben!"); return; }
+
+            statusDiv.innerHTML = "⏳ Frage LIS ab...";
+            hl7Div.style.display = 'none';
+
+            try {
+                const formData = new FormData();
+                formData.append('pid', pid);
+                
+                const response = await fetch('/query_lis', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                let html = `<strong>Ergebnis LIS (Labor):</strong><br>`;
+                html += `Kreatinin: <span style="color:${data.color}; font-weight:bold; font-size:1.2em;">${data.value} ${data.unit}</span>`;
+                html += `<br>Status: <span style="color:${data.color}">${data.status}</span>`;
+                
+                statusDiv.innerHTML = html;
+                statusDiv.style.borderLeft = `5px solid ${data.color}`;
+                statusDiv.style.paddingLeft = "10px";
+                
+                hl7Div.style.display = 'block';
+                hl7Div.innerText = "Empfangene HL7 Nachricht:\n" + data.raw_hl7;
+
+                // Workflow: LIS Schritt explizit highlighten
+                localStorage.setItem('workflowDrawerOpen', '1');
+                setWorkflowUi('LIS: Kreatinin prüfen (HL7 ORU)', 'RIS: Auftrag freigeben (HL7 ORM)', 'ORU', 'ORM');
+                    <p class="protocol-note">Sie erfassen Patientendaten im KIS. Technisch würde das typischerweise ein <code>HL7 ADT</code> Event auslösen.</p>
+                
+            } catch (e) {
+                statusDiv.innerHTML = "❌ Fehler beim LIS Abruf: " + e;
+            }
+        }
+        </script>
+
+        <h3 style="margin-top:0;">1a) KIS: Patientenaufnahme (HL7 ADT)</h3>
+        <p class="protocol-note">Sie erfassen Patientendaten im KIS. Technisch würde das typischerweise ein <code>HL7 ADT</code> Event auslösen.</p>
+
+        <form action="/create_order" method="post">
+            <label>Patientenname:</label>
+            <input type="text" name="name" placeholder="z.B. MUSTERMAN^MAX" required>
+            
+            <label>Patienten-ID (PID):</label>
+            <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <input type="text" id="pidInput" name="pid" placeholder="z.B. 123456" required>
+                <button type="button" onclick="checkLis()" style="background: #6f42c1; white-space: nowrap;">🧪 LIS Abfragen (Kreatinin)</button>
+            </div>
+            
+            <div id="lisStatus" style="margin-bottom: 15px; font-family: monospace;"></div>
+            <pre id="lisHl7" style="display:none; background:#333; color:#0f0; padding:10px; border-radius:5px; font-size:0.8em; overflow-x:auto;"></pre>
+            
+            <label>Auftragsnummer (Accession Number):</label>
+            <input type="text" name="acc" placeholder="z.B. ACC001" required>
+            
+            <label>Untersuchungsbeschreibung:</label>
+            <input type="text" name="desc" value="CT Abdomen mit KM" required>
+            
+            <h3 style="margin: 12px 0 6px 0;">1c) RIS: Auftrag freigeben (HL7 ORM)</h3>
+            <button type="submit">RIS: Auftrag freigeben (HL7 ORM) + Worklist erstellen</button>
+        </form>
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund:</strong> Vor Kontrastmittel-Gabe (KM) muss die Nierenfunktion geprüft werden. Das RIS fragt dazu mittels <code>HL7 ORU</code> (Observation Result) das Labor-System (LIS) ab. Erst danach wird der Auftrag (<code>HL7 ORM</code>) freigegeben.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. Modalität (CT Konsole)</h2>
+        <p>Gehen Sie zur Konsole des CT-Scanners. Der Scanner wird die Arbeitsliste vom RIS abfragen und die Bilder erzeugen.</p>
+        <a href="/modality"><button>CT Konsole öffnen</button></a>
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund:</strong> Die Modalität nutzt <code>DICOM C-FIND</code>, um geplante Untersuchungen abzurufen ("Worklist Pull").
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Radiologe: Workstation (Query/Retrieve)</h2>
+        <p>Simulieren Sie den Radiologen, der Bilder aus dem PACS abruft ("Pull").</p>
+        <a href="/viewer"><button style="background: #388e3c;">Workstation öffnen</button></a>
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund:</strong> Hier demonstriert der Simulator <code>DICOM C-MOVE</code>. Die Workstation fordert das PACS auf, Bilder zu senden.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. PACS Viewer & Import</h2>
+        <p>Betrachten Sie die gespeicherten Bilder im Orthanc PACS oder importieren Sie echte DICOM-Dateien.</p>
+        {% if orthanc_public_url %}
+            <div style="display: flex; gap: 10px;">
+                <a href="{{ orthanc_public_url }}" target="_blank"><button>Orthanc PACS öffnen</button></a>
+                <a href="{{ orthanc_public_url }}/app/explorer.html#upload" target="_blank"><button style="background: #e65100;">DICOM Daten hochladen</button></a>
+            </div>
+            <p><small>Login: trainer / trainer123 (falls gefragt)</small></p>
+        {% else %}
+            <p class="protocol-note">Hinweis: Auf einem zentralen Server ist Orthanc meist nicht öffentlich verlinkt. (Trainer-Zugriff z.B. per SSH Port-Forwarding.)</p>
+        {% endif %}
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund:</strong> Über die Weboberfläche nutzt Orthanc <code>DICOMWEB (RESTful API)</code> für Uploads. In der Praxis senden Modalitäten jedoch meist direkt via <code>C-STORE</code>.
+        </div>
+    </div>
+</body>
+</html>

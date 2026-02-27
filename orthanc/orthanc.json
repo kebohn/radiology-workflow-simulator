@@ -1,0 +1,29 @@
+{
+  "Name": "ORTHANC_PACS",
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "IndexDirectory": "/var/lib/orthanc/db",
+
+  "DicomServerEnabled": true,
+  "DicomPort": 4242,
+  "HttpPort": 8042,
+
+  "DicomModalities": {
+    "SIMULATOR": ["SIMULATOR", "simulator", 11112]
+  },
+
+  "Plugins": [
+    "/usr/local/share/orthanc/plugins/libModalityWorklists.so"
+  ],
+
+  "Worklists": {
+    "Enable": true,
+    "Database": "/var/lib/orthanc/worklists",
+    "FilterIssuerAet": false
+  },
+
+  "AuthenticationEnabled": true,
+  "RegisteredUsers": {
+    "trainer": "trainer123"
+  },
+  "RemoteAccessAllowed": true
+}

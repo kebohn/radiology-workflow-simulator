@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <title>Radiologie Befundungs-Arbeitsplatz</title>
+    <style>
+        body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
+        .section { background: #e8f5e9; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        .workflow { background: #fff; border: 1px solid #cfd8dc; padding: 12px; margin-bottom: 20px; border-radius: 5px; }
+        .workflow small { color: #546e7a; }
+        .workflow-steps { color: #546e7a; font-weight: 400; font-size: 0.85em; }
+        .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+        .workflow-diagram svg { width: 100%; height: 100%; }
+        .workflow-drawer-toggle { position: absolute; left: -9999px; }
+        .workflow-drawer-button {
+            position: fixed;
+            right: 0;
+            top: 140px;
+            z-index: 100;
+            background: #fff;
+            border: 1px solid #cfd8dc;
+            border-right: none;
+            padding: 10px 12px;
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .workflow-drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            height: 100vh;
+            width: min(520px, 90vw);
+            z-index: 99;
+            background: #fff;
+            border-left: 1px solid #cfd8dc;
+            padding: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(105%);
+            transition: transform 160ms ease-in-out;
+        }
+        .workflow-drawer header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid #eceff1;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+            flex: 0 0 auto;
+        }
+        .workflow-drawer-title { font-weight: 700; }
+        .workflow-drawer-close {
+            cursor: pointer;
+            border: 1px solid #cfd8dc;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #fff;
+        }
+        #workflowDrawer:checked ~ .workflow-drawer { transform: translateX(0); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white;}
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: #388e3c; color: white; }
+        button { background: #388e3c; color: white; border: none; padding: 8px 12px; cursor: pointer; }
+        button:hover { background: #1b5e20; }
+        .back-btn { background: #757575; margin-bottom: 20px; padding: 10px 15px; text-decoration: none; display: inline-block; color: white;}
+        .protocol-note { font-size: 0.85em; color: #455a64; font-style: italic; margin-top: 10px; }
+        .cache { background: #fff3e0; border: 1px solid #ff9800; }
+        .cache th { background: #ff9800; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+    </script>
+        <script>
+            document.addEventListener('DOMContentLoaded', () => {
+                const checkbox = document.getElementById('workflowDrawer');
+                if (!checkbox) return;
+                const storageKey = 'workflowDrawerOpen';
+                checkbox.checked = localStorage.getItem(storageKey) === '1';
+                checkbox.addEventListener('change', () => {
+                    localStorage.setItem(storageKey, checkbox.checked ? '1' : '0');
+                });
+            });
+        </script>
+</head>
+<body>
+    <a href="/" class="back-btn">&larr; Zurück zum Hauptmenü</a>
+    
+    <h1>Radiologe / Workstation</h1>
+    <p>Hier simulieren wir eine Befundungs-Workstation, die Bilder vom PACS abruft (Query/Retrieve).</p>
+    {% if student_code %}
+    <p class="protocol-note">Aktiver SuS-Code: <strong>{{ student_code }}</strong> (gefilterte Ansicht)</p>
+    {% endif %}
+
+    <input id="workflowDrawer" class="workflow-drawer-toggle" type="checkbox">
+    <label class="workflow-drawer-button" for="workflowDrawer">Workflow</label>
+    <aside class="workflow-drawer" aria-label="Workflow">
+        <header>
+            <div>
+                <div class="workflow-drawer-title">Workflow</div>
+                <div class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
+            </div>
+            <label class="workflow-drawer-close" for="workflowDrawer">Schliessen</label>
+        </header>
+        <div class="workflow-diagram">
+            <div class="mermaid">
+flowchart TB
+  classDef system fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
+  classDef backend fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000
+  classDef hl7 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
+  classDef dicom fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+  classDef active stroke:#000,stroke-width:4px
+  classDef next stroke-dasharray: 6 3
+
+  KIS["KIS"]
+  RIS["RIS"]
+  MWLServer["MWL"]
+  Modality["CT"]
+  PACS["PACS"]
+  Workstation["Workstation"]
+
+  ORM["HL7 ORM"]
+  QFIND["DICOM C-FIND (Study)"]
+  CMOVE["DICOM C-MOVE"]
+    WSSTORE["DICOM C-STORE (Rückkanal)"]
+
+  class KIS,RIS,Modality,Workstation system
+  class MWLServer,PACS backend
+  class ORM hl7
+  class QFIND,CMOVE,WSSTORE dicom
+
+  RIS -.-> ORM -.-> MWLServer
+  MWLServer --> Modality
+  Modality --> PACS
+  Workstation --> QFIND --> PACS
+  Workstation --> CMOVE --> PACS
+  PACS --> WSSTORE --> Workstation
+
+  %% Highlight: Workstation
+  {% if workflow_current and 'Retrieve' in workflow_current %}
+  class CMOVE active
+  class WSSTORE next
+  {% else %}
+  class QFIND active
+  class CMOVE next
+  {% endif %}
+            </div>
+        </div>
+    </aside>
+    
+    {% if msg %}
+    <div style="padding: 10px; background: #eee; border-left: 5px solid #333;">{{ msg }}</div>
+    {% endif %}
+
+    <div class="section">
+        <h2>1. PACS Suche (Query - C-FIND Study Root)</h2>
+        <p>Suche nach allen Studien im PACS (Orthanc).</p>
+        
+        {% if studies %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Patientenname</th>
+                    <th>Patienten-ID</th>
+                    <th>Studien-Datum</th>
+                    <th>Modalität</th>
+                    <th>Aktion</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for study in studies %}
+                <tr>
+                    <td>{{ study.PatientName }}</td>
+                    <td>{{ study.PatientID }}</td>
+                    <td>{{ study.StudyDate }}</td>
+                    <td>{{ study.ModalitiesInStudy }}</td>
+                    <td>
+                        <form action="/retrieve" method="post" style="display:inline;">
+                            <input type="hidden" name="study_uid" value="{{ study.StudyInstanceUID }}">
+                            <button type="submit">LADEN (C-MOVE)</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p><i>Keine Studien im PACS gefunden oder Verbindungsproblem.</i></p>
+        <p><a href="/viewer"><button>Aktualisieren (Suchen)</button></a></p>
+        {% endif %}
+        
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund:</strong> Die Workstation sendet <code>DICOM C-FIND</code> (Study Root Information Model) an das PACS, um eine Liste verfügbarer Studien zu erhalten.
+        </div>
+    </div>
+
+    <div class="section cache">
+        <h2>2. Lokaler Cache (Empfangene Bilder)</h2>
+        <p>Bilder, die erfolgreich per C-MOVE vom PACS an diese Workstation übertragen wurden.</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Zeitpunkt</th>
+                    <th>Patient</th>
+                    <th>Modalität</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for img in received %}
+                <tr>
+                    <td>{{ img.Timestamp }}</td>
+                    <td>{{ img.PatientName }}</td>
+                    <td>{{ img.Modality }}</td>
+                    <td>✅ Empfangen (C-STORE SCP)</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <div class="protocol-note">
+            ℹ️ <strong>Hintergrund C-MOVE:</strong>
+            <ol>
+                <li>Workstation sendet <code>C-MOVE Request</code> an PACS: "Bitte sende Studie X an mich (AE Title: SIMULATOR)".</li>
+                <li>PACS baut <strong>neue Verbindung</strong> zur Workstation auf.</li>
+                <li>PACS sendet Bilder via <code>C-STORE</code> an den Listener der Workstation.</li>
+                <li>Workstation speichert die Bilder lokal (hier: zeigt sie in der Liste an).</li>
+            </ol>
+        </div>
+    </div>
+
+</body>
+</html>

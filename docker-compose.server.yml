@@ -1,0 +1,57 @@
+services:
+  orthanc:
+    image: jodogne/orthanc-plugins
+    command: /run/secrets/orthanc.json
+    # IMPORTANT: Do not expose Orthanc publicly on a central server.
+    # Trainer access: SSH port-forward to localhost:8042 if needed.
+    ports:
+      - "127.0.0.1:4242:4242"
+      - "127.0.0.1:8042:8042"
+    environment:
+      ORTHANC_NAME: "ORTHANC"
+    volumes:
+      - ./orthanc/orthanc.json:/run/secrets/orthanc.json:ro
+      - ./orthanc-db:/var/lib/orthanc/db
+      - ./worklists:/var/lib/orthanc/worklists
+    restart: unless-stopped
+
+  simulator:
+    build: ./simulator
+    expose:
+      - "5000"
+    volumes:
+      - ./worklists:/app/worklists
+      - ./simulator-data:/app/data
+    environment:
+      ORTHANC_url: "http://orthanc:8042"
+      ORTHANC_DICOM_HOST: "orthanc"
+      ORTHANC_DICOM_PORT: "4242"
+      # Generates N SuS codes on first startup if none exist yet
+      AUTO_GENERATE_SESSIONS: "${AUTO_GENERATE_SESSIONS:-20}"
+      # Set this in your server environment (see docs/deploy-central-server.md)
+      FLASK_SECRET_KEY: "${FLASK_SECRET_KEY}"
+      # Enables /admin for generating SuS session codes
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      # Leave empty by default on central server (Orthanc not publicly linked)
+      ORTHANC_PUBLIC_URL: "${ORTHANC_PUBLIC_URL}"
+    depends_on:
+      - orthanc
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      # Enable HTTPS by switching to a real domain and uncommenting the next line plus updating deploy/Caddyfile
+      # - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - simulator
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

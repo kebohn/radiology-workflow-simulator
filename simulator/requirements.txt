@@ -1,0 +1,5 @@
+Flask
+pydicom
+pynetdicom
+requests
+datetime

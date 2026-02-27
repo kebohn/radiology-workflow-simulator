@@ -1,0 +1,56 @@
+name: Deploy (central server)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Add host to known_hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << 'SSH'
+            set -euo pipefail
+
+            : "${APP_DIR:=${{ secrets.SERVER_APP_DIR }}}"
+
+            if [ ! -d "$APP_DIR/.git" ]; then
+              mkdir -p "$APP_DIR"
+              git clone "${{ github.server_url }}/${{ github.repository }}.git" "$APP_DIR"
+            fi
+
+            cd "$APP_DIR"
+            git fetch --all --prune
+            git checkout main
+            git pull --ff-only
+
+            # Ensure .env exists (FLASK_SECRET_KEY required)
+            if [ ! -f .env ]; then
+              echo "ERROR: Missing .env in $APP_DIR (set FLASK_SECRET_KEY)." >&2
+              exit 1
+            fi
+
+            docker compose -f docker-compose.server.yml up -d --build
+          SSH

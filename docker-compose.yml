@@ -1,0 +1,31 @@
+services:
+  orthanc:
+    image: jodogne/orthanc-plugins
+    command: /run/secrets/orthanc.json
+    ports:
+      - "4242:4242"
+      - "8042:8042"
+    environment:
+      ORTHANC_NAME: "ORTHANC"
+    volumes:
+      - ./orthanc/orthanc.json:/run/secrets/orthanc.json:ro
+      - ./orthanc-db:/var/lib/orthanc/db
+      - ./worklists:/var/lib/orthanc/worklists
+    restart: unless-stopped
+
+  simulator:
+    build: ./simulator
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./worklists:/app/worklists
+      - ./simulator-data:/app/data
+    environment:
+      ORTHANC_url: "http://orthanc:8042"
+      ORTHANC_DICOM_HOST: "orthanc"
+      ORTHANC_DICOM_PORT: "4242"
+      ORTHANC_PUBLIC_URL: "${ORTHANC_PUBLIC_URL:-http://localhost:8042}"
+      FLASK_SECRET_KEY: "${FLASK_SECRET_KEY:-dev-only-change-me}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+    depends_on:
+      - orthanc

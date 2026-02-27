@@ -1,0 +1,12 @@
+{
+  # Email for Let's Encrypt certificates (optional but recommended)
+  # email you@example.com
+}
+
+# Replace with your domain, e.g. sim.example.org
+:80 {
+  encode gzip
+
+  # Serve the Flask simulator (only public service)
+  reverse_proxy simulator:5000
+}
