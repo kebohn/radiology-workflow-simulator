@@ -96,6 +96,31 @@ Minimal-Ansatz (Pseudo-Schritte):
 
 Dieses Repo enthält bereits einen einfachen Workflow: [.github/workflows/deploy-central-server.yml](.github/workflows/deploy-central-server.yml)
 
+## Optional: Prebuilt Simulator Image (kein Build auf dem Server)
+
+Wenn der Server keine Build-Tools haben soll oder das Build lange dauert, kannst du den Simulator als Image bauen und in eine Registry pushen (z.B. GHCR). Der Server zieht dann nur noch das Image.
+
+1. In deiner Server-`.env` zusätzlich setzen:
+
+```
+SIMULATOR_IMAGE=ghcr.io/<owner>/<repo>-simulator:latest
+```
+
+2. (Falls Repo/Package privat) einmalig auf dem Server bei GHCR einloggen:
+
+```
+echo "<TOKEN>" | docker login ghcr.io -u "<USERNAME>" --password-stdin
+```
+
+3. Deploy ohne Build:
+
+```
+docker compose -f docker-compose.server.yml pull simulator
+docker compose -f docker-compose.server.yml up -d --no-build
+```
+
+Hinweis: Im Repo gibt es einen Build-Workflow, der das Simulator-Image nach GHCR pushed: [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml)
+
 ### Nötige GitHub Secrets
 
 - `SERVER_HOST`: z.B. `203.0.113.10` oder `sim.example.org`
