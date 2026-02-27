@@ -3,10 +3,35 @@
   # email you@example.com
 }
 
-# Replace with your domain, e.g. sim.example.org
-:80 {
+# Main app (Simulator). Configure SIM_DOMAIN to a real hostname for public use.
+# With a hostname, Caddy will:
+# - obtain/renew TLS certs automatically (Let's Encrypt)
+# - redirect HTTP -> HTTPS
+{$SIM_DOMAIN:localhost} {
   encode gzip
 
   # Serve the Flask simulator (only public service)
   reverse_proxy simulator:5000
+}
+
+# Optional (trainer access): Expose Orthanc behind Caddy on a separate hostname.
+# Using a subdomain is the robust option because Orthanc's web UI uses absolute
+# paths (hosting under a subpath like /orthanc typically breaks navigation).
+#
+# Configure these env vars for the Caddy container:
+# - ORTHANC_DOMAIN          e.g. orthanc.example.org
+# - ORTHANC_PROXY_USER      e.g. trainer
+# - ORTHANC_PROXY_PASSHASH  bcrypt hash (generate via: caddy hash-password)
+{$ORTHANC_DOMAIN:orthanc.localhost} {
+  encode gzip
+
+  # Simple access control (shared credentials) via bcrypt hash.
+  # Configure via env vars on the server:
+  # - ORTHANC_PROXY_USER
+  # - ORTHANC_PROXY_PASSHASH  (generate via: caddy hash-password)
+  basic_auth {
+    {$ORTHANC_PROXY_USER} {$ORTHANC_PROXY_PASSHASH}
+  }
+
+  reverse_proxy orthanc:8042
 }

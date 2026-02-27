@@ -20,7 +20,7 @@ from typing import Optional
 app = Flask(__name__)
 
 # IMPORTANT (central server): Set a stable secret via env so sessions survive restarts.
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-insecure-change-me')
+app.secret_key = (os.environ.get('FLASK_SECRET_KEY') or 'dev-insecure-change-me')
 
 # Real CT studies can be large. If you hit HTTP 413 (Request Entity Too Large),
 # increase this value.
@@ -191,9 +191,36 @@ def safe_filename_component(value: str) -> str:
 
 @app.context_processor
 def _inject_globals():
+    orthanc_public_url = os.environ.get('ORTHANC_PUBLIC_URL', '').strip()
+    orthanc_domain = (os.environ.get('ORTHANC_DOMAIN') or '').strip()
+
+    # If Orthanc is exposed via reverse proxy, prefer HTTPS on its hostname.
+    # Allow explicit ORTHANC_PUBLIC_URL to override.
+    if not orthanc_public_url and orthanc_domain:
+        d = orthanc_domain
+        if d.startswith('http://'):
+            d = d[len('http://'):]
+        elif d.startswith('https://'):
+            d = d[len('https://'):]
+        d = d.strip().strip('/')
+        if d:
+            orthanc_public_url = f"https://{d}"
+
+    # Convenience for local development: if the simulator is accessed via localhost,
+    # show Orthanc links even when ORTHANC_PUBLIC_URL is not set.
+    # On central servers (accessed via IP/domain), we keep this empty by default so
+    # Orthanc is not accidentally linked publicly.
+    if not orthanc_public_url:
+        try:
+            host = (request.host or '').split(':', 1)[0].lower()
+        except Exception:
+            host = ''
+        if host in {'localhost', '127.0.0.1'}:
+            orthanc_public_url = 'http://localhost:8042'
+
     return {
         'student_code': get_student_code(),
-        'orthanc_public_url': os.environ.get('ORTHANC_PUBLIC_URL', '').strip(),
+        'orthanc_public_url': orthanc_public_url,
     }
 
 

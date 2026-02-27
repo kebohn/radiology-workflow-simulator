@@ -21,9 +21,6 @@
     "FilterIssuerAet": false
   },
 
-  "AuthenticationEnabled": true,
-  "RegisteredUsers": {
-    "trainer": "trainer123"
-  },
+  "AuthenticationEnabled": false,
   "RemoteAccessAllowed": true
 }

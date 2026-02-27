@@ -10,8 +10,9 @@ Ziel: Du simulierst den Datenfluss **KIS → LIS → RIS → MWL → CT → PACS
 - Optional: Workflow-Panel rechts öffnen (zeigt aktuellen und nächsten Schritt)
 
 Hinweis zu Orthanc (PACS):
-- Lokal: Orthanc UI unter http://localhost:8042 (Login: `trainer` / `trainer123`)
-- Zentraler Server: Orthanc ist nicht öffentlich. Der Trainer zeigt es ggf. per Screenshare oder über SSH Port-Forward.
+- Lokal: Orthanc UI unter http://localhost:8042
+- Zentraler Server (Standard): Orthanc ist nicht öffentlich. Der Trainer zeigt es ggf. per Screenshare oder über SSH Port-Forward.
+- Zentraler Server (optional, wenn vom Trainer freigeschaltet): Orthanc UI unter der vom Trainer genannten URL (Browser fragt nach einem Login, den der Trainer vorgibt)
 
 ---
 
@@ -98,7 +99,7 @@ Beobachte:
 
 ## Aufgabe 4: PACS Check – DICOM Metadaten in Orthanc pruefen
 
-1) Oeffne Orthanc UI: http://localhost:8042 (Login: `trainer` / `trainer123`).
+1) Oeffne Orthanc UI: http://localhost:8042
 2) Navigiere: Patient -> Studie -> Serie -> Instanz.
 3) Oeffne **DICOM Tags**.
 

@@ -26,6 +26,8 @@ services:
       ORTHANC_url: "http://orthanc:8042"
       ORTHANC_DICOM_HOST: "orthanc"
       ORTHANC_DICOM_PORT: "4242"
+      # If Orthanc is exposed via Caddy on a hostname, the simulator can auto-link it over HTTPS.
+      ORTHANC_DOMAIN: "${ORTHANC_DOMAIN:-}"
       # Generates N SuS codes on first startup if none exist yet
       AUTO_GENERATE_SESSIONS: "${AUTO_GENERATE_SESSIONS:-20}"
       # Set this in your server environment (see docs/deploy-central-server.md)
@@ -42,8 +44,18 @@ services:
     image: caddy:2
     ports:
       - "80:80"
-      # Enable HTTPS by switching to a real domain and uncommenting the next line plus updating deploy/Caddyfile
-      # - "443:443"
+      - "443:443"
+    environment:
+      # Public hostname for the simulator (e.g. sim.example.org)
+      SIM_DOMAIN: "${SIM_DOMAIN:-localhost}"
+      # Optional: reverse-proxy Orthanc behind Caddy on a separate hostname.
+      # Defaults are chosen to be safe and to keep Caddy from failing to start
+      # if variables are not configured.
+      ORTHANC_DOMAIN: "${ORTHANC_DOMAIN:-orthanc.localhost}"
+      # Basic Auth in front of Orthanc (shared credentials)
+      ORTHANC_PROXY_USER: "${ORTHANC_PROXY_USER:-sus}"
+      # Default hash = unknown long random password. Replace via .env on server.
+      ORTHANC_PROXY_PASSHASH: "${ORTHANC_PROXY_PASSHASH:-$$2a$$14$$lezIDF0dmUgYxcMC6gdwk.vyrGseRycf3NJWlhsltfsW5QHhbLvIC}"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
