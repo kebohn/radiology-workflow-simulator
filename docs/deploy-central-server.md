@@ -51,8 +51,18 @@ Firewall:
 - nicht freigeben: 8042/tcp, 4242/tcp (Orthanc)
 
 AWS EC2 Hinweis:
-- In der EC2 Security Group muessen Inbound Rules fuer 80/tcp (und optional 443/tcp) erlaubt sein.
+- In der EC2 Security Group muessen Inbound Rules fuer 80/tcp **und** 443/tcp erlaubt sein (HTTP wird auf HTTPS umgeleitet).
 - Die Instanz braucht eine Public IPv4 (oder Elastic IP) und muss in einem Public Subnet mit Route zum Internet Gateway liegen, sonst ist sie von aussen nicht erreichbar.
+
+Troubleshooting (Browser: `ERR_SSL_PROTOCOL_ERROR`):
+- Prüfe zuerst, dass 443/tcp wirklich offen ist (Security Group + ggf. NACL).
+- Auf dem Server prüfen, ob Caddy auf 443 lauscht und ohne Fehler läuft:
+
+```
+docker compose -f docker-compose.server.yml ps
+docker logs --tail=200 caddy
+sudo ss -ltnp | egrep ':(80|443)\b'
+```
 
 ## Schritt 2: Repo klonen
 

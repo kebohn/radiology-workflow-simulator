@@ -631,9 +631,41 @@ def send_c_store_uploaded_files(dicom_paths, *, patient_name, patient_id, access
 
     study_uid = derive_study_uid(accession_number)
 
+    # Some uploads may be compressed (e.g. JPEG 2000). Request a broader set of
+    # transfer syntaxes so Orthanc can accept them when supported.
+    from pydicom.uid import (
+        ExplicitVRLittleEndian,
+        ImplicitVRLittleEndian,
+        ExplicitVRBigEndian,
+        DeflatedExplicitVRLittleEndian,
+        JPEGBaseline8Bit,
+        JPEGExtended12Bit,
+        JPEGLosslessSV1,
+        JPEGLSLossless,
+        JPEGLSNearLossless,
+        JPEG2000,
+        JPEG2000Lossless,
+        RLELossless,
+    )
+
+    requested_transfer_syntaxes = [
+        ExplicitVRLittleEndian,
+        ImplicitVRLittleEndian,
+        DeflatedExplicitVRLittleEndian,
+        ExplicitVRBigEndian,
+        JPEGBaseline8Bit,
+        JPEGExtended12Bit,
+        JPEGLosslessSV1,
+        JPEGLSLossless,
+        JPEGLSNearLossless,
+        JPEG2000Lossless,
+        JPEG2000,
+        RLELossless,
+    ]
+
     ae = AE(ae_title=b'SIMULATOR')
     for cx in StoragePresentationContexts:
-        ae.add_requested_context(cx.abstract_syntax)
+        ae.add_requested_context(cx.abstract_syntax, requested_transfer_syntaxes)
 
     assoc = ae.associate(ORTHANC_HOST, ORTHANC_PORT)
     if not assoc.is_established:
@@ -663,7 +695,43 @@ def send_c_store_uploaded_files(dicom_paths, *, patient_name, patient_id, access
                 ds.Modality = getattr(ds, "Modality", "CT") or "CT"
 
             summary["sent"] += 1
-            status = assoc.send_c_store(ds)
+
+            try:
+                status = assoc.send_c_store(ds)
+            except ValueError as e:
+                # Typical case: dataset is compressed (e.g. JPEG2000) but no accepted
+                # presentation context exists for that transfer syntax.
+                # Try to decompress (if pixel data handlers are available) and retry.
+                try:
+                    ts = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
+                    is_compressed = bool(getattr(ts, "is_compressed", False))
+                except Exception:
+                    is_compressed = False
+
+                if is_compressed and hasattr(ds, "decompress"):
+                    try:
+                        ds.decompress()
+                        status = assoc.send_c_store(ds)
+                    except Exception:
+                        summary["failed"] += 1
+                        summary["errors"].append(
+                            "C-STORE fehlgeschlagen: Komprimierte DICOM-Datei (z.B. JPEG2000) "
+                            "konnte nicht gesendet/entpackt werden. Bitte unkomprimierte DICOMs hochladen "
+                            "oder Orthanc mit Unterstützung für diese Kompression betreiben. "
+                            f"Datei: {os.path.basename(path)}"
+                        )
+                        continue
+                else:
+                    summary["failed"] += 1
+                    summary["errors"].append(
+                        f"C-STORE fehlgeschlagen (Transfer Syntax nicht akzeptiert): {os.path.basename(path)} ({e})"
+                    )
+                    continue
+            except Exception as e:
+                summary["failed"] += 1
+                summary["errors"].append(f"C-STORE Fehlermeldung: {os.path.basename(path)} ({e})")
+                continue
+
             if status and getattr(status, "Status", None) == 0x0000:
                 summary["ok"] += 1
             else:
