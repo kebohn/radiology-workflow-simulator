@@ -23,7 +23,7 @@ Folgendes Diagramm visualisiert die Kommunikationswege zwischen den simulierten 
 
 Arbeitsblatt für Lernende: [docs/arbeitsblatt-sus.md](docs/arbeitsblatt-sus.md)
 
-Hinweis: Wenn Sie beim Preview die Meldung "No diagram type detected" sehen, wurde sehr wahrscheinlich die Mermaid-Preview auf die gesamte Markdown-Datei angewendet. Öffnen Sie stattdessen die Markdown-Vorschau (für `README.md`) oder nutzen Sie die reine Mermaid-Datei unter `docs/workflow.mermaid` (alternativ: `docs/workflow.mmd`).
+Hinweis: Wenn Sie beim Preview die Meldung "No diagram type detected" sehen, wurde sehr wahrscheinlich die Mermaid-Preview auf die gesamte Markdown-Datei angewendet. Öffnen Sie stattdessen die Markdown-Vorschau (für `README.md`) oder nutzen Sie die reine Mermaid-Datei unter `docs/workflow.mermaid`.
 
 ![Workflow-Diagramm](docs/workflow.svg)
 

@@ -16,12 +16,6 @@ services:
     restart: unless-stopped
 
   simulator:
-    # Optional: run from a prebuilt image (e.g. GHCR) instead of building on the server.
-    # Usage on server:
-    #   - set SIMULATOR_IMAGE in .env
-    #   - docker compose -f docker-compose.server.yml pull simulator
-    #   - docker compose -f docker-compose.server.yml up -d --no-build
-    image: "${SIMULATOR_IMAGE:-orthanc-example-simulator:local}"
     build: ./simulator
     expose:
       - "5000"

@@ -1,60 +1,74 @@
-# Deployment: Zentraler Server (ein Stack für alle SuS)
+# Deployment: Zentraler Server (Repo klonen + Docker Compose Build)
 
 Ziel: Ein zentraler Server hostet die App. SuS greifen per Browser zu.
 
 Wichtige Hinweise:
-- Orthanc ist **kein Multi-Tenant PACS**. Harte Isolation pro SuS geht nur mit getrennten Backends.
-- Dieses Repo implementiert daher eine **soft isolation**: SuS setzen einen **SuS-Code**; PID/Accession werden intern geprefixt und die Workstation filtert standardmässig darauf.
-- Für echte Trennung: pro SuS eigener Stack (z.B. Codespaces) oder pro SuS eigenes Orthanc.
+- Orthanc ist kein Multi-Tenant PACS. Harte Isolation pro SuS geht nur mit getrennten Backends.
+- Dieses Repo implementiert daher eine soft isolation: SuS setzen einen SuS-Code; PatientID/Accession werden intern geprefixt und die UI filtert standardmässig darauf.
+- Orthanc wird auf dem Server nur an `127.0.0.1` gebunden (nicht öffentlich).
 
-## Empfohlenes Minimal-Setup
+## Voraussetzungen
 
-- 1 VPS (Ubuntu) + Docker + Docker Compose
-- Reverse Proxy: **Caddy** (TLS/HTTPS automatisch)
-- Public: nur der Simulator (HTTP/HTTPS)
-- Orthanc: nur lokal am Server (127.0.0.1), Trainer-Zugriff per SSH Port-Forward
+- Linux Server (z.B. Ubuntu)
+- Docker Engine + Docker Compose Plugin
+- Optional: Domain (für HTTPS)
 
-## Schritt 1: Server vorbereiten
+## Schritt 1: Server vorbereiten (Ubuntu)
 
-1. Docker installieren (Engine) und Compose Plugin aktivieren.
-2. Firewall:
-   - erlauben: 80 (und 443 falls HTTPS)
-   - blockieren: 8042/4242 (Orthanc)
+Docker installieren (Ubuntu, Copy/Paste):
 
-## Schritt 1b: Domain + HTTPS (empfohlen)
+```
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
 
-1. DNS:
-   - `A` Record (oder `AAAA`) für z.B. `sim.example.org` auf die Server-IP setzen
-2. In [deploy/Caddyfile](deploy/Caddyfile) `:80` durch deine Domain ersetzen:
-   - `sim.example.org { ... }`
-3. In [docker-compose.server.yml](docker-compose.server.yml) Port `443:443` aktivieren (auskommentieren).
+# Docker Repo
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
 
-Caddy holt dann automatisch Zertifikate via Let's Encrypt.
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-## Schritt 2: Repo auf den Server
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+```
 
-Variante A (simpel): per Git clone
-- Repo auf den Server klonen
-- `cd orthanc-example`
+Optional: Docker ohne `sudo` (neu einloggen danach):
 
-Variante B (besser): Prebuilt Images (z.B. GHCR)
+```
+sudo usermod -aG docker $USER
+```
 
-Du kannst die komplette Architektur (Orthanc + Simulator + Caddy) als Images betreiben, damit der Server nichts kompilieren/bauen muss.
-In diesem Repo gibt es dafür ein Compose-File ohne `build:` und ohne lokale Config-Bind-Mounts:
-- [docker-compose.images.yml](docker-compose.images.yml)
+Installations-Check:
+
+```
+docker --version
+docker compose version
+```
+
+Firewall:
+- erlauben: 80/tcp (und 443/tcp falls HTTPS)
+- nicht freigeben: 8042/tcp, 4242/tcp (Orthanc)
+
+## Schritt 2: Repo klonen
+
+```
+git clone <REPO_URL> orthanc-example
+cd orthanc-example
+```
 
 ## Schritt 3: Secrets/Env setzen
 
-Auf dem Server im Repo-Ordner eine `.env` anlegen:
+```
+cp .env.server.example .env
+```
+
+Dann `.env` editieren (mindestens `FLASK_SECRET_KEY` und `ADMIN_PASSWORD` setzen).
+
+Tipp für `FLASK_SECRET_KEY`:
 
 ```
-FLASK_SECRET_KEY=please-change-me-long-random
-# Aktiviert das Admin-Panel unter /admin (zum Generieren von SuS-Codes)
-ADMIN_PASSWORD=please-change-me
-# Optional: wenn Sie nicht 20 Codes wollen, hier anpassen
-# AUTO_GENERATE_SESSIONS=20
-# ORTHANC_PUBLIC_URL leer lassen (Orthanc nicht öffentlich)
-ORTHANC_PUBLIC_URL=
+python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ## Schritt 4: Starten
@@ -63,16 +77,41 @@ ORTHANC_PUBLIC_URL=
 docker compose -f docker-compose.server.yml up -d --build
 ```
 
-Danach ist die App unter `http://SERVER-IP/` erreichbar.
+Danach ist die App erreichbar:
+- ohne Domain: `http://SERVER-IP/`
+- mit Domain + HTTPS: `https://sim.example.org/`
 
 Hinweis: Die Startseite leitet auf `/welcome` um, bis ein SuS-Session-Key gesetzt wurde.
 
-Mit Domain + HTTPS: `https://sim.example.org/`
+## Schritt 5: HTTPS aktivieren (optional, empfohlen)
+
+1) DNS:
+- `A` (oder `AAAA`) Record für z.B. `sim.example.org` auf die Server-IP setzen
+
+2) Caddy konfigurieren:
+- In [deploy/Caddyfile](deploy/Caddyfile) `:80` durch deine Domain ersetzen:
+  - `sim.example.org { ... }`
+
+3) Port 443 aktivieren:
+- In [docker-compose.server.yml](docker-compose.server.yml) die Zeile `443:443` auskommentieren.
+
+4) Änderungen anwenden:
+
+```
+docker compose -f docker-compose.server.yml up -d
+```
+
+Caddy holt dann automatisch Zertifikate via Let's Encrypt.
+
+## Betrieb für SuS
+
+- Einmalig als Trainer: `http://SERVER-IP/admin` öffnen, mit `ADMIN_PASSWORD` einloggen und Codes prüfen/generieren.
+- SuS bekommen jeweils einen Code oder direkt den Join-Link `/join/<CODE>`.
+- Ohne gesetzten Code landen SuS immer zuerst auf `/welcome`.
 
 ## Trainer: Orthanc UI trotzdem nutzen
 
-Orthanc läuft nur auf `127.0.0.1:8042`.
-Von deinem Laptop:
+Orthanc läuft nur auf `127.0.0.1:8042`. Von deinem Laptop:
 
 ```
 ssh -L 8042:127.0.0.1:8042 user@SERVER
@@ -80,96 +119,12 @@ ssh -L 8042:127.0.0.1:8042 user@SERVER
 
 Dann lokal im Browser: `http://localhost:8042` (Login: `trainer` / `trainer123`).
 
-## Parameter-Überblick (Server)
+## Update (neue Version deployen)
 
-Auf dem Server im Repo-Ordner eine `.env` anlegen (siehe auch `.env.server.example`):
-- `FLASK_SECRET_KEY` (Pflicht)
-- `ADMIN_PASSWORD` (Pflicht, aktiviert `/admin`)
-- `AUTO_GENERATE_SESSIONS` (optional, Default 20)
-- `ORTHANC_PUBLIC_URL` (optional, auf Server meist leer)
-
-Zusätzlich (wenn du den Stack komplett als Images betreibst):
-- `ORTHANC_IMAGE`, `SIMULATOR_IMAGE`, `CADDY_IMAGE`
-- `CADDY_HOST` (z.B. `:80` oder `sim.example.org`)
-
-## Prebuilt Images (kein Build auf dem Server)
-
-### Schritt A: Images bauen und nach GHCR pushen (lokal)
-
-Beispiel: Du willst alles nach GHCR pushen und die Packages sind auf "Public" gestellt.
-
-1) Login:
+Im Repo-Ordner:
 
 ```
-docker login ghcr.io
+git pull
+docker compose -f docker-compose.server.yml up -d --build
 ```
-
-2) Tags setzen:
-
-```
-export OWNER_REPO="<owner>/<repo>"  # z.B. kebohn/radiology-workflow-simulator
-export TAG="latest"
-```
-
-3) Orthanc (mit `orthanc.json` im Image):
-
-```
-docker buildx build --platform linux/amd64 \
-   -t ghcr.io/$OWNER_REPO-orthanc:$TAG \
-   --push ./orthanc
-```
-
-4) Simulator:
-
-```
-docker buildx build --platform linux/amd64 \
-   -t ghcr.io/$OWNER_REPO-simulator:$TAG \
-   --push ./simulator
-```
-
-5) Caddy (mit env-basiertem Caddyfile im Image):
-
-```
-docker buildx build --platform linux/amd64 \
-   -t ghcr.io/$OWNER_REPO-caddy:$TAG \
-   --push ./deploy/caddy
-```
-
-### Schritt B: Server starten (nur pull + up)
-
-1) `.env` auf dem Server anlegen (siehe `.env.server.example`) und Images setzen:
-
-```
-ORTHANC_IMAGE=ghcr.io/<owner>/<repo>-orthanc:latest
-SIMULATOR_IMAGE=ghcr.io/<owner>/<repo>-simulator:latest
-CADDY_IMAGE=ghcr.io/<owner>/<repo>-caddy:latest
-
-FLASK_SECRET_KEY=...
-ADMIN_PASSWORD=...
-AUTO_GENERATE_SESSIONS=20
-ORTHANC_PUBLIC_URL=
-
-# HTTP: :80 oder HTTPS: sim.example.org
-CADDY_HOST=:80
-```
-
-2) Start:
-
-```
-docker compose -f docker-compose.images.yml pull
-docker compose -f docker-compose.images.yml up -d
-```
-
-Hinweis: Wenn die Images public sind, braucht der Server kein `docker login` zum Pullen.
-
-## CI: Build-Only Workflow (Smoke Test)
-
-Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) läuft bei Push/PR und baut das Simulator-Image als Smoke Test. Er benötigt keine Secrets und pusht nichts nach GHCR.
-
-## Betrieb für SuS (wichtig)
-
-- Einmalig als Trainer: `http://SERVER-IP/admin` öffnen, mit `ADMIN_PASSWORD` einloggen und **20 Codes generieren** (oder `AUTO_GENERATE_SESSIONS` nutzen).
-- SuS bekommen jeweils einen Code oder direkt den Join-Link `/join/<CODE>`.
-- Ohne gesetzten Code landen SuS immer zuerst auf `/welcome`.
-- Sobald Codes existieren, akzeptiert der Simulator nur noch diese Codes.
 
