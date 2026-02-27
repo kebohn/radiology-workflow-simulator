@@ -50,11 +50,15 @@ Firewall:
 - erlauben: 80/tcp (und 443/tcp falls HTTPS)
 - nicht freigeben: 8042/tcp, 4242/tcp (Orthanc)
 
+AWS EC2 Hinweis:
+- In der EC2 Security Group muessen Inbound Rules fuer 80/tcp (und optional 443/tcp) erlaubt sein.
+- Die Instanz braucht eine Public IPv4 (oder Elastic IP) und muss in einem Public Subnet mit Route zum Internet Gateway liegen, sonst ist sie von aussen nicht erreichbar.
+
 ## Schritt 2: Repo klonen
 
 ```
-git clone <REPO_URL> orthanc-example
-cd orthanc-example
+git clone <REPO_URL> radiology-workflow-simulator
+cd radiology-workflow-simulator
 ```
 
 ## Schritt 3: Secrets/Env setzen

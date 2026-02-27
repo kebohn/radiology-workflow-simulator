@@ -3,8 +3,9 @@
 <head>
     <title>Radiologie Workflow Simulator</title>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .section { background: #f0f0f0; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .section { background: #f0f0f0; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
         .workflow { background: #fff; border: 1px solid #cfd8dc; padding: 12px; margin-bottom: 20px; border-radius: 5px; }
         .workflow small { color: #546e7a; }
         .workflow-steps { color: #546e7a; font-weight: 400; font-size: 0.85em; }
@@ -62,11 +63,28 @@
         #workflowDrawer:checked ~ .workflow-drawer { transform: translateX(0); }
         h2 { margin-top: 0; }
         label { display: block; margin-bottom: 5px; }
-        input { margin-bottom: 10px; width: 100%; padding: 8px; }
-        button { background: #007bff; color: white; border: none; padding: 10px 15px; cursor: pointer; }
+        input { margin-bottom: 10px; width: 100%; max-width: 100%; padding: 8px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 15px; cursor: pointer; max-width: 100%; white-space: normal; }
         button:hover { background: #0056b3; }
         .success { color: green; font-weight: bold; padding: 10px; background: #e8f5e9; border: 1px solid green; margin-bottom: 20px;}
         .protocol-note { font-size: 0.85em; color: #666; font-style: italic; margin-top: 5px; }
+
+        .tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; width: 100%; }
+        .tile { background: #fff; border: 1px solid #cfd8dc; border-radius: 10px; padding: 12px; min-width: 0; }
+        .tile h3 { margin: 0 0 6px 0; font-size: 1.05em; }
+        .tile p { margin-top: 0; }
+        .tile .tile-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
+        .tile .tile-actions button { white-space: nowrap; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+        @media (max-width: 520px) {
+            body { padding: 12px; }
+            .workflow-drawer-button { top: 96px; }
+        }
+
+        @media (max-width: 620px) {
+            .tile-grid { grid-template-columns: 1fr; }
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
@@ -122,8 +140,8 @@
     <div class="section">
         <h2>SuS Session (zentraler Server)</h2>
         <p class="protocol-note">Setzen Sie hier Ihren SuS-Code. Dann werden PID/Accession intern mit diesem Prefix versehen und die Workstation zeigt standardmässig nur Studien mit diesem Prefix (soft isolation).</p>
-        <form action="/set_student" method="post" style="display:flex; gap:10px; align-items:flex-start;">
-            <input type="text" name="student_code" placeholder="z.B. SUS17" value="{{ student_code }}" style="margin-bottom:0;">
+        <form action="/set_student" method="post" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start;">
+            <input type="text" name="student_code" placeholder="z.B. SUS17" value="{{ student_code }}" style="margin-bottom:0; flex: 1 1 220px; min-width: 180px;">
             <button type="submit" style="white-space:nowrap;">SuS-Code setzen</button>
         </form>
         {% if student_code %}
@@ -143,8 +161,7 @@
         <header>
             <div>
                 <div class="workflow-drawer-title">Workflow</div>
-                                <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
-                                            <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
+                <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
             </div>
             <label class="workflow-drawer-close" for="workflowDrawer">Schliessen</label>
         </header>
@@ -166,13 +183,13 @@ flowchart TB
     PACS["PACS"]
     Workstation["Workstation"]
 
-    ADT["HL7 ADT"]
-    ORU["HL7 ORU"]
-    ORM["HL7 ORM"]
-    MWL["DICOM C-FIND (MWL)"]
-    STORE["DICOM C-STORE"]
-    QFIND["DICOM C-FIND (Study)"]
-    CMOVE["DICOM C-MOVE"]
+    ADT["1. HL7 ADT"]
+    ORU["2. HL7 ORU"]
+    ORM["3. HL7 ORM"]
+    MWL["4. DICOM C-FIND (MWL)"]
+    STORE["5. DICOM C-STORE"]
+    QFIND["6. DICOM C-FIND (Study)"]
+    CMOVE["7. DICOM C-MOVE"]
 
     class KIS,RIS,LIS,Modality,Workstation system
     class MWLServer,PACS backend
@@ -199,11 +216,11 @@ flowchart TB
                                 const nxt = String(state.next || '');
 
                                 if (cur.includes('LIS') || cur.includes('ORU') || cur.toLowerCase().includes('kreatinin')) {
-                                    setWorkflowUi(cur || '—', nxt || '—', 'ORU', 'ORM');
+                                    setWorkflowUi(cur || '2. HL7 ORU', nxt || '3. HL7 ORM', 'ORU', 'ORM');
                                 } else if (cur.includes('RIS') || cur.includes('ORM') || cur.toLowerCase().includes('auftrag')) {
-                                    setWorkflowUi(cur || '—', nxt || '—', 'ORM', 'MWL');
+                                    setWorkflowUi(cur || '3. HL7 ORM', nxt || '4. DICOM C-FIND (MWL)', 'ORM', 'MWL');
                                 } else {
-                                    setWorkflowUi(cur || '—', nxt || '—', 'ADT', 'ORU');
+                                    setWorkflowUi(cur || '1. HL7 ADT', nxt || '2. HL7 ORU', 'ADT', 'ORU');
                                 }
                             });
                         </script>
@@ -224,7 +241,7 @@ flowchart TB
 
     <div class="section">
         <h2>1. Verwaltung (HL7): KIS, LIS, RIS</h2>
-        <p>In der Praxis sind <strong>KIS</strong> (Patientenaufnahme), <strong>LIS</strong> (Labor) und <strong>RIS</strong> (Radiologie-Auftrag) getrennte Systeme. Hier sind sie in einem Dashboard gebündelt, aber als Schritte getrennt.</p>
+        <p>In der Praxis sind <strong>KIS</strong> (Patientenaufnahme), <strong>LIS</strong> (Labor) und <strong>RIS</strong> (Radiologie-Auftrag) getrennte Systeme. Hier sind sie als drei getrennte Kacheln dargestellt.</p>
         
         <script>
         async function checkLis() {
@@ -261,77 +278,96 @@ flowchart TB
 
                 // Workflow: LIS Schritt explizit highlighten
                 localStorage.setItem('workflowDrawerOpen', '1');
-                setWorkflowUi('LIS: Kreatinin prüfen (HL7 ORU)', 'RIS: Auftrag freigeben (HL7 ORM)', 'ORU', 'ORM');
-                    <p class="protocol-note">Sie erfassen Patientendaten im KIS. Technisch würde das typischerweise ein <code>HL7 ADT</code> Event auslösen.</p>
+                setWorkflowUi('2. LIS: Kreatinin prüfen (HL7 ORU)', '3. RIS: Auftrag freigeben (HL7 ORM)', 'ORU', 'ORM');
                 
             } catch (e) {
-                statusDiv.innerHTML = "❌ Fehler beim LIS Abruf: " + e;
+                statusDiv.innerText = "❌ Fehler beim LIS Abruf: " + e;
             }
         }
         </script>
 
-        <h3 style="margin-top:0;">1a) KIS: Patientenaufnahme (HL7 ADT)</h3>
-        <p class="protocol-note">Sie erfassen Patientendaten im KIS. Technisch würde das typischerweise ein <code>HL7 ADT</code> Event auslösen.</p>
-
         <form action="/create_order" method="post">
-            <label>Patientenname:</label>
-            <input type="text" name="name" placeholder="z.B. MUSTERMAN^MAX" required>
-            
-            <label>Patienten-ID (PID):</label>
-            <div style="display: flex; gap: 10px; align-items: flex-start;">
-                <input type="text" id="pidInput" name="pid" placeholder="z.B. 123456" required>
-                <button type="button" onclick="checkLis()" style="background: #6f42c1; white-space: nowrap;">🧪 LIS Abfragen (Kreatinin)</button>
+            <div class="tile-grid">
+                <div class="tile">
+                    <h3>KIS: Patientenaufnahme (HL7 ADT)</h3>
+                    <p class="protocol-note">Stammdaten erfassen. Technisch würde das typischerweise ein <code>HL7 ADT</code> Event auslösen.</p>
+
+                    <label>Patientenname:</label>
+                    <input type="text" name="name" placeholder="z.B. MUSTERMAN^MAX" required>
+
+                    <label>Patienten-ID (PID):</label>
+                    <input type="text" id="pidInput" name="pid" placeholder="z.B. 123456" required>
+                </div>
+
+                <div class="tile">
+                    <h3>LIS: Labor (HL7 ORU)</h3>
+                    <p class="protocol-note">Kreatinin prüfen (Kontrastmittel-Check). Diese Abfrage nutzt die eingegebene PID.</p>
+
+                    <div class="tile-actions" style="margin-bottom: 10px;">
+                        <button type="button" onclick="checkLis()" style="background: #6f42c1;">🧪 LIS Abfragen (Kreatinin)</button>
+                    </div>
+
+                    <div id="lisStatus" class="mono" style="margin-bottom: 10px;"></div>
+                    <pre id="lisHl7" style="display:none; background:#333; color:#0f0; padding:10px; border-radius:8px; font-size:0.8em; overflow-x:auto;"></pre>
+                </div>
+
+                <div class="tile">
+                    <h3>RIS: Auftrag (HL7 ORM)</h3>
+                    <p class="protocol-note">Auftrag freigeben und Worklist-Eintrag erzeugen (nach dem Laborwert).</p>
+
+                    <label>Auftragsnummer (Accession Number):</label>
+                    <input type="text" name="acc" placeholder="z.B. ACC001" required>
+
+                    <label>Untersuchungsbeschreibung:</label>
+                    <input type="text" name="desc" value="CT Abdomen mit KM" required>
+
+                    <button type="submit">RIS: Auftrag freigeben (HL7 ORM) + Worklist erstellen</button>
+                </div>
             </div>
-            
-            <div id="lisStatus" style="margin-bottom: 15px; font-family: monospace;"></div>
-            <pre id="lisHl7" style="display:none; background:#333; color:#0f0; padding:10px; border-radius:5px; font-size:0.8em; overflow-x:auto;"></pre>
-            
-            <label>Auftragsnummer (Accession Number):</label>
-            <input type="text" name="acc" placeholder="z.B. ACC001" required>
-            
-            <label>Untersuchungsbeschreibung:</label>
-            <input type="text" name="desc" value="CT Abdomen mit KM" required>
-            
-            <h3 style="margin: 12px 0 6px 0;">1c) RIS: Auftrag freigeben (HL7 ORM)</h3>
-            <button type="submit">RIS: Auftrag freigeben (HL7 ORM) + Worklist erstellen</button>
+
+            <div class="protocol-note" style="margin-top: 10px;">
+                ℹ️ <strong>Hintergrund:</strong> Vor Kontrastmittel-Gabe (KM) muss die Nierenfunktion geprüft werden. Das RIS fragt dazu mittels <code>HL7 ORU</code> (Observation Result) das Labor-System (LIS) ab. Erst danach wird der Auftrag (<code>HL7 ORM</code>) freigegeben.
+            </div>
         </form>
-        <div class="protocol-note">
-            ℹ️ <strong>Hintergrund:</strong> Vor Kontrastmittel-Gabe (KM) muss die Nierenfunktion geprüft werden. Das RIS fragt dazu mittels <code>HL7 ORU</code> (Observation Result) das Labor-System (LIS) ab. Erst danach wird der Auftrag (<code>HL7 ORM</code>) freigegeben.
-        </div>
     </div>
 
     <div class="section">
-        <h2>2. Modalität (CT Konsole)</h2>
-        <p>Gehen Sie zur Konsole des CT-Scanners. Der Scanner wird die Arbeitsliste vom RIS abfragen und die Bilder erzeugen.</p>
-        <a href="/modality"><button>CT Konsole öffnen</button></a>
-        <div class="protocol-note">
-            ℹ️ <strong>Hintergrund:</strong> Die Modalität nutzt <code>DICOM C-FIND</code>, um geplante Untersuchungen abzurufen ("Worklist Pull").
-        </div>
-    </div>
-
-    <div class="section">
-        <h2>3. Radiologe: Workstation (Query/Retrieve)</h2>
-        <p>Simulieren Sie den Radiologen, der Bilder aus dem PACS abruft ("Pull").</p>
-        <a href="/viewer"><button style="background: #388e3c;">Workstation öffnen</button></a>
-        <div class="protocol-note">
-            ℹ️ <strong>Hintergrund:</strong> Hier demonstriert der Simulator <code>DICOM C-MOVE</code>. Die Workstation fordert das PACS auf, Bilder zu senden.
-        </div>
-    </div>
-
-    <div class="section">
-        <h2>4. PACS Viewer & Import</h2>
-        <p>Betrachten Sie die gespeicherten Bilder im Orthanc PACS oder importieren Sie echte DICOM-Dateien.</p>
-        {% if orthanc_public_url %}
-            <div style="display: flex; gap: 10px;">
-                <a href="{{ orthanc_public_url }}" target="_blank"><button>Orthanc PACS öffnen</button></a>
-                <a href="{{ orthanc_public_url }}/app/explorer.html#upload" target="_blank"><button style="background: #e65100;">DICOM Daten hochladen</button></a>
+        <h2>2-4. Durchführung</h2>
+        <div class="tile-grid">
+            <div class="tile">
+                <h3>2. Modalität (CT Konsole)</h3>
+                <p>Gehen Sie zur Konsole des CT-Scanners. Der Scanner wird die Arbeitsliste vom RIS abfragen und die Bilder erzeugen.</p>
+                <a href="/modality"><button>CT Konsole öffnen</button></a>
+                <div class="protocol-note">
+                    ℹ️ <strong>Hintergrund:</strong> Die Modalität nutzt <code>DICOM C-FIND</code>, um geplante Untersuchungen abzurufen ("Worklist Pull").
+                </div>
             </div>
-            <p><small>Login: trainer / trainer123 (falls gefragt)</small></p>
-        {% else %}
-            <p class="protocol-note">Hinweis: Auf einem zentralen Server ist Orthanc meist nicht öffentlich verlinkt. (Trainer-Zugriff z.B. per SSH Port-Forwarding.)</p>
-        {% endif %}
-        <div class="protocol-note">
-            ℹ️ <strong>Hintergrund:</strong> Über die Weboberfläche nutzt Orthanc <code>DICOMWEB (RESTful API)</code> für Uploads. In der Praxis senden Modalitäten jedoch meist direkt via <code>C-STORE</code>.
+
+            <div class="tile">
+                <h3>3. Radiologe: Workstation (Query/Retrieve)</h3>
+                <p>Simulieren Sie den Radiologen, der Bilder aus dem PACS abruft ("Pull").</p>
+                <a href="/viewer"><button style="background: #388e3c;">Workstation öffnen</button></a>
+                <div class="protocol-note">
+                    ℹ️ <strong>Hintergrund:</strong> Hier demonstriert der Simulator <code>DICOM C-MOVE</code>. Die Workstation fordert das PACS auf, Bilder zu senden.
+                </div>
+            </div>
+
+            <div class="tile">
+                <h3>4. PACS Viewer & Import</h3>
+                <p>Betrachten Sie die gespeicherten Bilder im Orthanc PACS oder importieren Sie echte DICOM-Dateien.</p>
+                {% if orthanc_public_url %}
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a href="{{ orthanc_public_url }}" target="_blank"><button>Orthanc PACS öffnen</button></a>
+                        <a href="{{ orthanc_public_url }}/app/explorer.html#upload" target="_blank"><button style="background: #e65100;">DICOM Daten hochladen</button></a>
+                    </div>
+                    <p><small>Login: trainer / trainer123 (falls gefragt)</small></p>
+                {% else %}
+                    <p class="protocol-note">Hinweis: Auf einem zentralen Server ist Orthanc meist nicht öffentlich verlinkt. (Trainer-Zugriff z.B. per SSH Port-Forwarding.)</p>
+                {% endif %}
+                <div class="protocol-note">
+                    ℹ️ <strong>Hintergrund:</strong> Über die Weboberfläche nutzt Orthanc <code>DICOMWEB (RESTful API)</code> für Uploads. In der Praxis senden Modalitäten jedoch meist direkt via <code>C-STORE</code>.
+                </div>
+            </div>
         </div>
     </div>
 </body>
