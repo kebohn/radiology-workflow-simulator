@@ -37,8 +37,9 @@ Variante A (simpel): per Git clone
 - Repo auf den Server klonen
 - `cd orthanc-example`
 
-Variante B (besser): Images via GitHub Container Registry (GHCR)
-- Siehe "GitHub Actions" unten
+Variante B (besser): Prebuilt Images (z.B. GHCR)
+
+Du kannst den Simulator als vorgebautes Image betreiben, damit der Server nichts kompilieren/bauen muss.
 
 ## Schritt 3: Secrets/Env setzen
 
@@ -77,37 +78,16 @@ ssh -L 8042:127.0.0.1:8042 user@SERVER
 
 Dann lokal im Browser: `http://localhost:8042` (Login: `trainer` / `trainer123`).
 
-## GitHub Actions (Deploy über GitHub)
-
-Dieses Repo enthält einen Deploy-Workflow: [.github/workflows/deploy-central-server.yml](.github/workflows/deploy-central-server.yml)
-
-Er macht per SSH auf dem Server:
-- Repo klonen (falls noch nicht vorhanden)
-- `git fetch` + Checkout des Branches, der den Run ausgelöst hat
-- `docker compose -f docker-compose.server.yml up -d --build`
-
-### GitHub Actions: Parameter setzen
-
-In GitHub: Repo → Settings → Secrets and variables → Actions
-
-Pflicht (Secrets oder Variables):
-- `SERVER_HOST` (Host oder IP, z.B. `sim.example.org`)
-- `SERVER_USER` (z.B. `ubuntu`)
-- `SERVER_APP_DIR` (z.B. `/opt/orthanc-example`)
-
-Pflicht (nur Secret):
-- `SERVER_SSH_KEY` (Private Key, ed25519)
-
-Optional (Secret oder Variable):
-- `SERVER_PORT` (Default: `22`)
-
-### Server: Parameter setzen
+## Parameter-Ueberblick (Server)
 
 Auf dem Server im Repo-Ordner eine `.env` anlegen (siehe auch `.env.server.example`):
 - `FLASK_SECRET_KEY` (Pflicht)
 - `ADMIN_PASSWORD` (Pflicht, aktiviert `/admin`)
 - `AUTO_GENERATE_SESSIONS` (optional, Default 20)
 - `ORTHANC_PUBLIC_URL` (optional, auf Server meist leer)
+
+Optional (wenn du den Simulator als Image betreibst):
+- `SIMULATOR_IMAGE` (z.B. `ghcr.io/<owner>/<repo>-simulator:latest`)
 
 ## Optional: Prebuilt Simulator Image (kein Build auf dem Server)
 
@@ -141,18 +121,7 @@ Hinweis: Der Workflow [.github/workflows/build-simulator-image.yml](.github/work
 
 ## CI: Build-Only Workflow (Smoke Test)
 
-Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) baut bei Push/PR (nur wenn sich `simulator/**` aendert) das Docker Image als schnellen Smoke Test. Er benoetigt keine Secrets.
-
-### Nötige GitHub Secrets
-
-- `SERVER_HOST`: z.B. `203.0.113.10` oder `sim.example.org`
-- `SERVER_USER`: z.B. `ubuntu`
-- `SERVER_SSH_KEY`: Private Key (ed25519) für den Deploy-User
-- `SERVER_APP_DIR`: Pfad auf dem Server, z.B. `/opt/orthanc-example`
-
-Der Workflow macht dann per SSH:
-- `git pull`
-- `docker compose -f docker-compose.server.yml up -d --build`
+Der Workflow [.github/workflows/build-simulator-image.yml](.github/workflows/build-simulator-image.yml) baut bei Push/PR (nur wenn sich `simulator/**` ändert) das Docker Image als schnellen Smoke Test. Er benötigt keine Secrets.
 
 ## Betrieb für SuS (wichtig)
 
