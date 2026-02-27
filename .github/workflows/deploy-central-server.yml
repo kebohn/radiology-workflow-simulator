@@ -12,6 +12,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" ]] || missing+=(SERVER_HOST)
+          [[ -n "${{ secrets.SERVER_USER || vars.SERVER_USER }}" ]] || missing+=(SERVER_USER)
+          [[ -n "${{ secrets.SERVER_SSH_KEY }}" ]] || missing+=(SERVER_SSH_KEY)
+          [[ -n "${{ secrets.SERVER_APP_DIR || vars.SERVER_APP_DIR }}" ]] || missing+=(SERVER_APP_DIR)
+          if (( ${#missing[@]} )); then
+            echo "ERROR: Missing required GitHub Actions secrets: ${missing[*]}" >&2
+            echo "Set them under: Settings → Secrets and variables → Actions (Secrets or Variables)." >&2
+            exit 1
+          fi
+
       - name: Install SSH key
         shell: bash
         run: |
@@ -22,19 +37,22 @@ jobs:
 
       - name: Add host to known_hosts
         shell: bash
+        env:
+          SERVER_PORT: ${{ secrets.SERVER_PORT || vars.SERVER_PORT }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          PORT="${SERVER_PORT:-22}"
+          ssh-keyscan -p "$PORT" -H "${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Deploy via SSH
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << 'SSH'
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USER || vars.SERVER_USER }}@${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" << 'SSH'
             set -euo pipefail
 
-            : "${APP_DIR:=${{ secrets.SERVER_APP_DIR }}}"
+            : "${APP_DIR:=${{ secrets.SERVER_APP_DIR || vars.SERVER_APP_DIR }}}"
 
             if [ ! -d "$APP_DIR/.git" ]; then
               mkdir -p "$APP_DIR"
