@@ -31,6 +31,15 @@ app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1 GiB
 STUDENT_CODE_RE = re.compile(r"[^A-Za-z0-9_-]")
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
 
+
+def normalize_student_code(raw: Optional[str]) -> str:
+    if not raw:
+        return ""
+    code = str(raw).strip()
+    code = STUDENT_CODE_RE.sub("", code)
+    code = code[:24]
+    return code
+
 DATA_DIR = os.environ.get('DATA_DIR', '/app/data')
 SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
 _SESSIONS_LOCK = threading.Lock()
@@ -145,15 +154,6 @@ def _maybe_auto_generate_sessions() -> None:
 
 
 _maybe_auto_generate_sessions()
-
-
-def normalize_student_code(raw: Optional[str]) -> str:
-    if not raw:
-        return ""
-    code = raw.strip()
-    code = STUDENT_CODE_RE.sub("", code)
-    code = code[:24]
-    return code
 
 
 def get_student_code() -> str:
