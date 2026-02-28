@@ -14,6 +14,10 @@ Hinweis zu Orthanc (PACS):
 - Zentraler Server (Standard): Orthanc ist nicht öffentlich. Der Trainer zeigt es ggf. per Screenshare oder über SSH Port-Forward.
 - Zentraler Server (optional, wenn vom Trainer freigeschaltet): Orthanc UI unter der vom Trainer genannten URL (Browser fragt nach einem Login, den der Trainer vorgibt)
 
+Hinweis zur SuS-PACS-Ansicht (gefiltert):
+- Öffne im Simulator die Seite **/pacs** (Button: "PACS (SuS) öffnen (gefiltert)").
+- Dort siehst du nur Studien, deren `PatientID` mit deinem SuS-Code beginnt, inklusive Metadaten und einfachem Viewer.
+
 ---
 
 ## Aufgabe 0: System-Check (DICOM C-ECHO)
@@ -97,11 +101,11 @@ Beobachte:
 
 ---
 
-## Aufgabe 4: PACS Check – DICOM Metadaten in Orthanc pruefen
+## Aufgabe 4: PACS Check – DICOM Metadaten + Viewer (gefiltert)
 
-1) Oeffne Orthanc UI: http://localhost:8042
-2) Navigiere: Patient -> Studie -> Serie -> Instanz.
-3) Oeffne **DICOM Tags**.
+1) Oeffne im Simulator die Seite **/pacs**.
+2) Klicke bei deiner Studie auf **Metadata**.
+3) Klicke auf **Viewer**, um die Bilder anzusehen.
 
 Pruefe diese Tags:
 - (0010,0010) `PatientName`
@@ -130,19 +134,6 @@ Notiere:
 
 Notiere:
 - Warum ist C-MOVE ein "Pull", fuehrt aber zu einem "Push" ueber den C-STORE Rueckkanal?
-
----
-
-## Aufgabe 7: Datenschutz – Studie anonymisieren (Orthanc)
-
-1) In Orthanc: Oeffne eine Studie.
-2) Klicke auf **Anonymize** / **Anonymisieren**.
-3) Bestaetige mit den Standard-Einstellungen.
-4) Vergleiche danach die DICOM Tags erneut.
-
-Notiere:
-- Wie heisst der Patient nach der Anonymisierung?
-- Sind `PatientName` und `PatientID` weg oder ersetzt?
 
 ---
 

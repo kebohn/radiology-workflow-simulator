@@ -26,7 +26,7 @@
     {% if not admin_enabled %}
         <div class="section">
             <h2>Admin deaktiviert</h2>
-            <p class="muted">Setzen Sie <b>ADMIN_PASSWORD</b> (und einen stabilen <b>FLASK_SECRET_KEY</b>) im Server-Setup, damit Sie hier SuS-Codes generieren können.</p>
+            <p class="muted">Setzen Sie <b>ADMIN_PASSHASH</b> (bcrypt, wie bei Caddy basic_auth) und einen stabilen <b>FLASK_SECRET_KEY</b> im Server-Setup, damit Sie hier SuS-Codes generieren können.</p>
             <p><a href="/">Zurück zur Startseite</a></p>
         </div>
     {% elif not is_admin %}
@@ -34,12 +34,17 @@
             <h2>Login</h2>
             <form action="/admin/login" method="post" class="row">
                 <div>
-                    <div class="muted">ADMIN_PASSWORD</div>
+                    <div class="muted">Benutzername</div>
+                    <input type="text" name="username" value="{{ admin_user or 'admin' }}" placeholder="admin" required>
+                </div>
+                <div>
+                    <div class="muted">Passwort</div>
                     <input type="password" name="password" placeholder="Admin-Passwort" required>
                 </div>
                 <button type="submit">Login</button>
                 <a href="/">Startseite</a>
             </form>
+            <p class="muted" style="margin-top:10px;">Hinweis: Auf dem Server sollte ein bcrypt Hash gesetzt sein (ADMIN_PASSHASH oder ORTHANC_PROXY_PASSHASH).</p>
         </div>
     {% else %}
         <div class="section">

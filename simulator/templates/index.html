@@ -9,8 +9,8 @@
         .workflow { background: #fff; border: 1px solid #cfd8dc; padding: 12px; margin-bottom: 20px; border-radius: 5px; }
         .workflow small { color: #546e7a; }
         .workflow-steps { color: #546e7a; font-weight: 400; font-size: 0.85em; }
-        .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-        .workflow-diagram svg { width: 100%; height: 100%; }
+        .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: auto; }
+        .workflow-diagram svg { width: 100%; height: auto; }
         .workflow-drawer-toggle { position: absolute; left: -9999px; }
         .workflow-drawer-button {
             position: fixed;
@@ -88,7 +88,7 @@
     </style>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
-            mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+            mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
     </script>
         <script>
             document.addEventListener('DOMContentLoaded', () => {
@@ -125,12 +125,129 @@
                 }
             }
 
+            function workflowExplain(nodeId) {
+                const explain = {
+                    KIS: { title: 'KIS', text: 'Patientenaufnahme / Stammdaten. Von hier kommen typischerweise HL7 ADT Events.' },
+                    LIS: { title: 'LIS', text: 'Labor-System. Liefert z.B. Kreatinin als HL7 ORU Resultat.' },
+                    RIS: { title: 'RIS', text: 'Radiologie-Informationssystem. Auftrag/Order (HL7 ORM) und Worklist.' },
+                    MWLServer: { title: 'MWL', text: 'DICOM Modality Worklist (SCP). Modalitäten fragen hier die Arbeitsliste ab.' },
+                    Modality: { title: 'CT', text: 'Modalität (CT Konsole). Ruft MWL ab und sendet Bilder via DICOM C-STORE.' },
+                    PACS: { title: 'PACS', text: 'PACS/Archiv. Speichert DICOM und liefert Query/Retrieve.' },
+                    Workstation: { title: 'Workstation', text: 'Befundungs-Workstation. Sucht Studien (C-FIND) und holt sie (C-MOVE).' },
+                    ADT: { title: '1. HL7 ADT', text: 'ADT = Aufnahme/Patientenstammdaten (Admission/Discharge/Transfer).' },
+                    ORU: { title: '2. HL7 ORU', text: 'ORU = Befund/Resultat (Observation Result). Hier: Kreatinin aus dem LIS.' },
+                    ORM: { title: '3. HL7 ORM', text: 'ORM = Auftrag/Order (Order Message). Hier: RIS erstellt radiologischen Auftrag.' },
+                    MWL: { title: '4. DICOM C-FIND (MWL)', text: 'CT fragt geplante Untersuchungen ab (Worklist Pull).' },
+                    STORE: { title: '5. DICOM C-STORE', text: 'Modalität sendet Bilder/Instanzen an das PACS.' },
+                    QFIND: { title: '6. DICOM C-FIND (Study)', text: 'Workstation sucht Studien im PACS (Study Root Query).' },
+                    CMOVE: { title: '7. DICOM C-MOVE', text: 'Workstation holt Studie. PACS sendet Instanzen an den Empfänger (Store SCP).' },
+                };
+
+                const key = String(nodeId || '').trim();
+                const info = explain[key];
+                const panel = document.getElementById('workflowExplainPanel');
+                if (!panel) return;
+
+                if (!info) {
+                    panel.style.display = 'none';
+                    panel.innerHTML = '';
+                    return;
+                }
+
+                panel.style.display = 'block';
+                panel.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">${info.title}</div><div>${info.text}</div>`;
+
+                const checkbox = document.getElementById('workflowDrawer');
+                if (checkbox) checkbox.checked = true;
+                try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+            }
+
+            function workflowTraceAdd(currentText, nextText, activeNode, nextNode) {
+                const entry = {
+                    ts: new Date().toISOString(),
+                    page: window.location.pathname + window.location.search,
+                    cur: currentText || '',
+                    nxt: nextText || '',
+                    a: activeNode || '',
+                    n: nextNode || '',
+                };
+
+                try {
+                    const key = 'workflowTrace';
+                    const raw = localStorage.getItem(key);
+                    const list = raw ? JSON.parse(raw) : [];
+                    const last = Array.isArray(list) && list.length ? list[list.length - 1] : null;
+                    const same = last && last.cur === entry.cur && last.nxt === entry.nxt && last.a === entry.a && last.n === entry.n && last.page === entry.page;
+                    if (!same) {
+                        const next = Array.isArray(list) ? list : [];
+                        next.push(entry);
+                        while (next.length > 20) next.shift();
+                        localStorage.setItem(key, JSON.stringify(next));
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            function workflowTraceRender() {
+                const host = document.getElementById('workflowTrace');
+                if (!host) return;
+                let list = [];
+                try {
+                    const raw = localStorage.getItem('workflowTrace');
+                    list = raw ? JSON.parse(raw) : [];
+                } catch (e) {
+                    list = [];
+                }
+                if (!Array.isArray(list) || list.length === 0) {
+                    host.innerHTML = '<div style="color:#546e7a; font-size:0.85em;">Noch keine Events.</div>';
+                    return;
+                }
+
+                const items = list.slice(-10).reverse();
+                host.innerHTML = items.map((it) => {
+                    const when = (it.ts || '').replace('T', ' ').slice(0, 19);
+                    const label = `${when} — ${it.cur || '—'} → ${it.nxt || '—'}`;
+                    const href = it.page || '/';
+                    return `<button type="button" data-href="${href}" style="width:100%; text-align:left; border:1px solid #cfd8dc; background:#fff; border-radius:8px; padding:6px 8px; margin:4px 0; cursor:pointer;">${label}</button>`;
+                }).join('');
+
+                host.querySelectorAll('button[data-href]').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const href = btn.getAttribute('data-href');
+                        if (href) window.location.href = href;
+                    });
+                });
+            }
+
+            function workflowBindStepButtons() {
+                const map = {
+                    '1': '/',
+                    '2': '/',
+                    '3': '/',
+                    '4': '/modality',
+                    '5': '/modality',
+                    '6': '/viewer',
+                    '7': '/viewer',
+                };
+                document.querySelectorAll('[data-wf-step]').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const step = btn.getAttribute('data-wf-step') || '';
+                        const href = map[step] || '/';
+                        try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+                        window.location.href = href;
+                    });
+                });
+            }
+
             function setWorkflowUi(currentText, nextText, activeNode, nextNode) {
                 const steps = document.getElementById('workflowSteps');
                 if (steps) {
                     steps.textContent = `Aktuell: ${currentText || '—'} | Als nächstes: ${nextText || '—'}`;
                 }
                 renderWorkflow(activeNode, nextNode);
+                workflowTraceAdd(currentText, nextText, activeNode, nextNode);
+                workflowTraceRender();
             }
         </script>
 </head>
@@ -203,13 +320,47 @@ flowchart TB
     Modality --> STORE --> PACS
     Workstation --> QFIND --> PACS
     Workstation --> CMOVE --> PACS
+
+    click KIS workflowExplain "KIS"
+    click RIS workflowExplain "RIS"
+    click LIS workflowExplain "LIS"
+    click MWLServer workflowExplain "MWL"
+    click Modality workflowExplain "CT"
+    click PACS workflowExplain "PACS"
+    click Workstation workflowExplain "Workstation"
+    click ADT workflowExplain "HL7 ADT"
+    click ORU workflowExplain "HL7 ORU"
+    click ORM workflowExplain "HL7 ORM"
+    click MWL workflowExplain "DICOM MWL"
+    click STORE workflowExplain "DICOM C-STORE"
+    click QFIND workflowExplain "DICOM C-FIND"
+    click CMOVE workflowExplain "DICOM C-MOVE"
                         </template>
 
                         <div id="workflowMermaid" class="mermaid"></div>
 
+                        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                            <button type="button" data-wf-step="1" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">1</button>
+                            <button type="button" data-wf-step="2" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">2</button>
+                            <button type="button" data-wf-step="3" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">3</button>
+                            <button type="button" data-wf-step="4" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">4</button>
+                            <button type="button" data-wf-step="5" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">5</button>
+                            <button type="button" data-wf-step="6" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">6</button>
+                            <button type="button" data-wf-step="7" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">7</button>
+                        </div>
+
+                        <div id="workflowExplainPanel" style="display:none; margin-top:10px; padding:10px; border-radius:10px; border:1px solid #eceff1; background:#fafafa;"></div>
+
+                        <div style="margin-top:10px;">
+                            <div style="font-weight:700; margin-bottom:6px;">Trace</div>
+                            <div id="workflowTrace"></div>
+                        </div>
+
                         <script type="application/json" id="workflowStateJson">{{ {'current': workflow_current or '', 'next': workflow_next or ''}|tojson }}</script>
                         <script>
                             document.addEventListener('DOMContentLoaded', () => {
+                                workflowBindStepButtons();
+                                workflowTraceRender();
                                 const stateEl = document.getElementById('workflowStateJson');
                                 const state = stateEl ? JSON.parse(stateEl.textContent || '{}') : { current: '', next: '' };
                                 const cur = String(state.current || '');
@@ -241,79 +392,183 @@ flowchart TB
 
     <div class="section">
         <h2>1. Verwaltung (HL7): KIS, LIS, RIS</h2>
-        <p>In der Praxis sind <strong>KIS</strong> (Patientenaufnahme), <strong>LIS</strong> (Labor) und <strong>RIS</strong> (Radiologie-Auftrag) getrennte Systeme. Hier sind sie als drei getrennte Kacheln dargestellt.</p>
+        <p>In der Praxis sind <strong>KIS</strong> (Patientenaufnahme), <strong>LIS</strong> (Labor) und <strong>RIS</strong> (Radiologie-Auftrag) getrennte Systeme. Hier folgt der Ablauf bewusst strikt: erst Patient im KIS erfassen (HL7 ADT), dann RIS → LIS Anfrage, dann Auftrag im RIS (HL7 ORM).</p>
         
         <script>
-        async function checkLis() {
-            const pid = document.getElementById('pidInput').value;
-            const statusDiv = document.getElementById('lisStatus');
-            const hl7Div = document.getElementById('lisHl7');
-            
-            if(!pid) { alert("Bitte erst eine PID eingeben!"); return; }
+        function _selectedPatient() {
+            const sel = document.getElementById('risPatientSelect');
+            if (!sel) return null;
+            const opt = sel.options[sel.selectedIndex];
+            if (!opt) return null;
+            const pid = (sel.value || '').trim();
+            const name = (opt.getAttribute('data-name') || '').trim();
+            if (!pid) return null;
+            return { pid, name };
+        }
 
-            statusDiv.innerHTML = "⏳ Frage LIS ab...";
-            hl7Div.style.display = 'none';
+        function bindPatientSelect() {
+            const sel = document.getElementById('risPatientSelect');
+            if (!sel) return;
+            const pidInput = document.getElementById('orderPid');
+            const nameInput = document.getElementById('orderName');
+
+            function apply() {
+                const p = _selectedPatient();
+                if (!p) {
+                    if (pidInput) pidInput.value = '';
+                    if (nameInput) nameInput.value = '';
+                    return;
+                }
+                if (pidInput) pidInput.value = p.pid;
+                if (nameInput) nameInput.value = p.name;
+            }
+
+            sel.addEventListener('change', apply);
+            apply();
+        }
+
+        async function risRequestLis() {
+            const p = _selectedPatient();
+            const statusDiv = document.getElementById('lisStatus');
+            const reqDiv = document.getElementById('lisHl7Request');
+            const resDiv = document.getElementById('lisHl7Response');
+
+            if (!p) { alert('Bitte zuerst einen erfassten Patienten auswählen (KIS).'); return; }
+            if (!statusDiv || !reqDiv || !resDiv) return;
+
+            statusDiv.innerHTML = '⏳ RIS → LIS Anfrage senden...';
+            reqDiv.style.display = 'none';
+            resDiv.style.display = 'none';
 
             try {
                 const formData = new FormData();
-                formData.append('pid', pid);
-                
-                const response = await fetch('/query_lis', {
-                    method: 'POST',
-                    body: formData
-                });
-                
+                formData.append('pid', p.pid);
+
+                const response = await fetch('/query_lis', { method: 'POST', body: formData });
                 const data = await response.json();
-                
+
+                if (!response.ok || !data.ok) {
+                    statusDiv.innerText = '❌ ' + (data.error || 'Fehler beim LIS Abruf');
+                    return;
+                }
+
                 let html = `<strong>Ergebnis LIS (Labor):</strong><br>`;
+                html += `PID: <span class="mono">${data.pid}</span><br>`;
                 html += `Kreatinin: <span style="color:${data.color}; font-weight:bold; font-size:1.2em;">${data.value} ${data.unit}</span>`;
                 html += `<br>Status: <span style="color:${data.color}">${data.status}</span>`;
-                
+
                 statusDiv.innerHTML = html;
                 statusDiv.style.borderLeft = `5px solid ${data.color}`;
-                statusDiv.style.paddingLeft = "10px";
-                
-                hl7Div.style.display = 'block';
-                hl7Div.innerText = "Empfangene HL7 Nachricht:\n" + data.raw_hl7;
+                statusDiv.style.paddingLeft = '10px';
 
-                // Workflow: LIS Schritt explizit highlighten
+                reqDiv.style.display = 'block';
+                resDiv.style.display = 'block';
+                reqDiv.innerText = 'Gesendete HL7 Nachricht (RIS → LIS):\n' + (data.raw_request_hl7 || '');
+                resDiv.innerText = 'Empfangene HL7 Nachricht (LIS → RIS):\n' + (data.raw_hl7 || '');
+
+                // Workflow: ORU/ORM highlight
                 localStorage.setItem('workflowDrawerOpen', '1');
-                setWorkflowUi('2. LIS: Kreatinin prüfen (HL7 ORU)', '3. RIS: Auftrag freigeben (HL7 ORM)', 'ORU', 'ORM');
-                
+                setWorkflowUi('2. RIS → LIS: Kreatinin anfordern (HL7)', '3. RIS: Auftrag freigeben (HL7 ORM)', 'ORU', 'ORM');
             } catch (e) {
-                statusDiv.innerText = "❌ Fehler beim LIS Abruf: " + e;
+                statusDiv.innerText = '❌ Fehler beim LIS Abruf: ' + e;
             }
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            bindPatientSelect();
+        });
         </script>
 
-        <form action="/create_order" method="post">
-            <div class="tile-grid">
-                <div class="tile">
-                    <h3>KIS: Patientenaufnahme (HL7 ADT)</h3>
-                    <p class="protocol-note">Stammdaten erfassen. Technisch würde das typischerweise ein <code>HL7 ADT</code> Event auslösen.</p>
+        <div class="tile-grid">
+            <div class="tile">
+                <h3>KIS: Patientenaufnahme (HL7 ADT)</h3>
+                <p class="protocol-note">Zuerst Stammdaten erfassen. Das löst ein <code>HL7 ADT</code> Event aus (sichtbar als Roh-Nachricht).</p>
 
+                <form action="/kis/register_patient" method="post">
                     <label>Patientenname:</label>
                     <input type="text" name="name" placeholder="z.B. MUSTERMAN^MAX" required>
 
                     <label>Patienten-ID (PID):</label>
-                    <input type="text" id="pidInput" name="pid" placeholder="z.B. 123456" required>
-                </div>
+                    <input type="text" name="pid" placeholder="z.B. 123456" required>
 
-                <div class="tile">
-                    <h3>LIS: Labor (HL7 ORU)</h3>
-                    <p class="protocol-note">Kreatinin prüfen (Kontrastmittel-Check). Diese Abfrage nutzt die eingegebene PID.</p>
-
-                    <div class="tile-actions" style="margin-bottom: 10px;">
-                        <button type="button" onclick="checkLis()" style="background: #6f42c1;">🧪 LIS Abfragen (Kreatinin)</button>
+                    <div class="tile-actions">
+                        <button type="submit" style="background: #0d6efd;">Patient erfassen (ADT)</button>
+                        <button type="button" onclick="window.location='/'" style="background:#455a64;">Aktualisieren</button>
                     </div>
+                </form>
 
-                    <div id="lisStatus" class="mono" style="margin-bottom: 10px;"></div>
-                    <pre id="lisHl7" style="display:none; background:#333; color:#0f0; padding:10px; border-radius:8px; font-size:0.8em; overflow-x:auto;"></pre>
+                {% if last_adt_hl7 %}
+                    <div class="protocol-note" style="margin-top: 10px;">Letzte HL7 ADT Nachricht:</div>
+                    <pre style="background:#333; color:#0f0; padding:10px; border-radius:8px; font-size:0.8em; overflow-x:auto;">{{ last_adt_hl7 }}</pre>
+                {% endif %}
+
+                <div class="protocol-note" style="margin-top: 10px;">Erfasste Patienten (mit Aktualisieren neu laden):</div>
+                {% if patients and patients|length > 0 %}
+                    <table style="margin-top:6px;">
+                        <thead>
+                            <tr>
+                                <th>PID</th>
+                                <th>Name</th>
+                                <th>Zeit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in patients %}
+                                <tr>
+                                    <td class="mono">{{ p.pid }}</td>
+                                    <td>{{ p.name }}</td>
+                                    <td class="mono">{{ p.updated_at or p.created_at }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <div class="protocol-note">Noch keine Patienten erfasst.</div>
+                {% endif %}
+            </div>
+
+            <div class="tile">
+                <h3>RIS: Anfrage an LIS (HL7)</h3>
+                <p class="protocol-note">Nachdem der Patient erfasst ist, sendet das RIS eine Anfrage ans LIS. Das LIS antwortet mit einem Labor-Resultat (HL7 ORU).</p>
+
+                <label>Patient auswählen (aus KIS):</label>
+                <select id="risPatientSelect" style="width:100%; padding:8px; margin-bottom:10px;">
+                    <option value="">— Bitte wählen —</option>
+                    {% for p in patients or [] %}
+                        <option value="{{ p.pid }}" data-name="{{ p.name }}">{{ p.pid }} — {{ p.name }}</option>
+                    {% endfor %}
+                </select>
+
+                <div class="tile-actions" style="margin-bottom: 10px;">
+                    <button type="button" onclick="risRequestLis()" style="background: #6f42c1;">RIS → LIS: Kreatinin anfordern</button>
                 </div>
 
-                <div class="tile">
-                    <h3>RIS: Auftrag (HL7 ORM)</h3>
-                    <p class="protocol-note">Auftrag freigeben und Worklist-Eintrag erzeugen (nach dem Laborwert).</p>
+                <div id="lisStatus" class="mono" style="margin-bottom: 10px;">
+                    {% if last_lis_summary %}
+                        <strong>Letztes Ergebnis LIS (Labor):</strong><br>
+                        PID: <span class="mono">{{ last_lis_summary.pid }}</span><br>
+                        Kreatinin: <span style="color:{{ last_lis_summary.color }}; font-weight:bold; font-size:1.2em;">{{ last_lis_summary.value }} {{ last_lis_summary.unit }}</span><br>
+                        Status: <span style="color:{{ last_lis_summary.color }}">{{ last_lis_summary.status }}</span>
+                    {% endif %}
+                </div>
+
+                <pre id="lisHl7Request" style="display:{% if last_lis_request_hl7 %}block{% else %}none{% endif %}; background:#333; color:#0f0; padding:10px; border-radius:8px; font-size:0.8em; overflow-x:auto;">{% if last_lis_request_hl7 %}Gesendete HL7 Nachricht (RIS → LIS):
+{{ last_lis_request_hl7 }}{% endif %}</pre>
+
+                <pre id="lisHl7Response" style="display:{% if last_oru_hl7 %}block{% else %}none{% endif %}; background:#333; color:#0f0; padding:10px; border-radius:8px; font-size:0.8em; overflow-x:auto; margin-top:8px;">{% if last_oru_hl7 %}Empfangene HL7 Nachricht (LIS → RIS):
+{{ last_oru_hl7 }}{% endif %}</pre>
+            </div>
+
+            <div class="tile">
+                <h3>RIS: Auftrag (HL7 ORM)</h3>
+                <p class="protocol-note">Auftrag freigeben und Worklist-Eintrag erzeugen (nach dem Laborwert).</p>
+
+                <form action="/create_order" method="post">
+                    <label>Patientenname:</label>
+                    <input type="text" id="orderName" name="name" placeholder="wird aus Auswahl übernommen" required>
+
+                    <label>Patienten-ID (PID):</label>
+                    <input type="text" id="orderPid" name="pid" placeholder="wird aus Auswahl übernommen" required>
 
                     <label>Auftragsnummer (Accession Number):</label>
                     <input type="text" name="acc" placeholder="z.B. ACC001" required>
@@ -322,13 +577,13 @@ flowchart TB
                     <input type="text" name="desc" value="CT Abdomen mit KM" required>
 
                     <button type="submit">RIS: Auftrag freigeben (HL7 ORM) + Worklist erstellen</button>
-                </div>
+                </form>
             </div>
+        </div>
 
-            <div class="protocol-note" style="margin-top: 10px;">
-                ℹ️ <strong>Hintergrund:</strong> Vor Kontrastmittel-Gabe (KM) muss die Nierenfunktion geprüft werden. Das RIS fragt dazu mittels <code>HL7 ORU</code> (Observation Result) das Labor-System (LIS) ab. Erst danach wird der Auftrag (<code>HL7 ORM</code>) freigegeben.
-            </div>
-        </form>
+        <div class="protocol-note" style="margin-top: 10px;">
+            ℹ️ <strong>Hintergrund:</strong> Vor Kontrastmittel-Gabe (KM) muss die Nierenfunktion geprüft werden. Das RIS sendet eine Anfrage ans LIS und erhält ein Resultat (HL7 ORU). Erst danach wird der Auftrag (<code>HL7 ORM</code>) freigegeben.
+        </div>
     </div>
 
     <div class="section">
@@ -355,12 +610,15 @@ flowchart TB
             <div class="tile">
                 <h3>4. PACS Viewer & Import</h3>
                 <p>Betrachten Sie die gespeicherten Bilder im Orthanc PACS oder importieren Sie echte DICOM-Dateien.</p>
+                <div style="margin-bottom: 10px;">
+                    <a href="/pacs"><button style="background: #1565c0;">PACS (SuS) öffnen (gefiltert)</button></a>
+                </div>
                 {% if orthanc_public_url %}
                     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                         <a href="{{ orthanc_public_url }}" target="_blank"><button>Orthanc PACS öffnen</button></a>
                         <a href="{{ orthanc_public_url }}/app/explorer.html#upload" target="_blank"><button style="background: #e65100;">DICOM Daten hochladen</button></a>
                     </div>
-                    <p><small>Login: trainer / trainer123 (falls gefragt)</small></p>
+                    <p class="protocol-note"><small>Hinweis: Wenn Orthanc über Caddy geschützt ist, fragt der Browser nach dem Basic-Auth Login.</small></p>
                 {% else %}
                     <p class="protocol-note">Hinweis: Auf einem zentralen Server ist Orthanc meist nicht öffentlich verlinkt. (Trainer-Zugriff z.B. per SSH Port-Forwarding.)</p>
                 {% endif %}

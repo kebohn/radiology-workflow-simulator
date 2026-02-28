@@ -33,7 +33,11 @@ services:
       # Set this in your server environment (see docs/deploy-central-server.md)
       FLASK_SECRET_KEY: "${FLASK_SECRET_KEY}"
       # Enables /admin for generating SuS session codes
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      # Preferred: bcrypt (same format as `caddy hash-password`)
+      ADMIN_USER: "${ADMIN_USER:-admin}"
+      ADMIN_PASSHASH: "${ADMIN_PASSHASH:-}"
+      # Legacy (plaintext) fallback; prefer ADMIN_PASSHASH
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       # Leave empty by default on central server (Orthanc not publicly linked)
       ORTHANC_PUBLIC_URL: "${ORTHANC_PUBLIC_URL}"
     depends_on:
@@ -53,7 +57,7 @@ services:
       # if variables are not configured.
       ORTHANC_DOMAIN: "${ORTHANC_DOMAIN:-orthanc.localhost}"
       # Basic Auth in front of Orthanc (shared credentials)
-      ORTHANC_PROXY_USER: "${ORTHANC_PROXY_USER:-sus}"
+      ORTHANC_PROXY_USER: "${ORTHANC_PROXY_USER:-admin}"
       # Default hash = unknown long random password. Replace via .env on server.
       ORTHANC_PROXY_PASSHASH: "${ORTHANC_PROXY_PASSHASH:-$$2a$$14$$lezIDF0dmUgYxcMC6gdwk.vyrGseRycf3NJWlhsltfsW5QHhbLvIC}"
     volumes:

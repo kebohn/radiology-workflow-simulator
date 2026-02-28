@@ -2,3 +2,6 @@ Flask
 pydicom
 pynetdicom
 requests
+numpy
+Pillow
+bcrypt

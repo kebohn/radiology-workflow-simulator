@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>PACS — Instanz</title>
+  <style>
+    body { font-family: sans-serif; max-width: 1300px; margin: 0 auto; padding: 20px; }
+    .back-btn { background: #757575; margin-bottom: 20px; padding: 10px 15px; text-decoration: none; display: inline-block; color: white; border-radius: 6px; }
+    .btn { background: #1565c0; color: white; border: none; padding: 8px 12px; cursor: pointer; border-radius: 6px; text-decoration: none; display: inline-block; }
+    .btn.secondary { background: #455a64; }
+    .btn:hover { filter: brightness(0.95); }
+    .msg { padding: 10px; background: #eee; border-left: 5px solid #333; margin: 12px 0; }
+    .note { font-size: 0.9em; color: #455a64; }
+    .layout { display: grid; grid-template-columns: 1fr 560px; gap: 16px; align-items: start; }
+    .panel { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+    img { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid #e5e7eb; background: white; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; }
+    th, td { padding: 7px 8px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: top; }
+    th { background: #1565c0; color: white; position: sticky; top: 0; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+
+    .workflow { background: #fff; border: 1px solid #cfd8dc; padding: 12px; margin-bottom: 20px; border-radius: 5px; }
+    .workflow small { color: #546e7a; }
+    .workflow-steps { color: #546e7a; font-weight: 400; font-size: 0.85em; }
+    .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: auto; }
+    .workflow-diagram svg { width: 100%; height: auto; }
+    .workflow-drawer-toggle { position: absolute; left: -9999px; }
+    .workflow-drawer-button {
+      position: fixed;
+      right: 0;
+      top: 140px;
+      z-index: 100;
+      background: #fff;
+      border: 1px solid #cfd8dc;
+      border-right: none;
+      padding: 10px 12px;
+      border-top-left-radius: 8px;
+      border-bottom-left-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .workflow-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      height: 100vh;
+      width: min(520px, 90vw);
+      z-index: 99;
+      background: #fff;
+      border-left: 1px solid #cfd8dc;
+      padding: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(105%);
+      transition: transform 160ms ease-in-out;
+    }
+    .workflow-drawer header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #eceff1;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      flex: 0 0 auto;
+    }
+    .workflow-drawer-title { font-weight: 700; }
+    .workflow-drawer-close {
+      cursor: pointer;
+      border: 1px solid #cfd8dc;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: #fff;
+    }
+    #workflowDrawer:checked ~ .workflow-drawer { transform: translateX(0); }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+  </script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const checkbox = document.getElementById('workflowDrawer');
+      if (!checkbox) return;
+      const storageKey = 'workflowDrawerOpen';
+      checkbox.checked = localStorage.getItem(storageKey) === '1';
+      checkbox.addEventListener('change', () => {
+        localStorage.setItem(storageKey, checkbox.checked ? '1' : '0');
+      });
+    });
+
+    function renderWorkflow(activeNode, nextNode) {
+      const base = document.getElementById('workflowGraphBase');
+      const mermaidDiv = document.getElementById('workflowMermaid');
+      if (!base || !mermaidDiv || !window.mermaid) return;
+
+      let highlight = '';
+      if (activeNode) highlight += `\n  class ${activeNode} active`;
+      if (nextNode) highlight += `\n  class ${nextNode} next`;
+
+      mermaidDiv.removeAttribute('data-processed');
+      mermaidDiv.innerHTML = base.innerHTML.trim() + highlight + "\n";
+
+      try {
+        if (typeof window.mermaid.run === 'function') {
+          window.mermaid.run({ nodes: [mermaidDiv] });
+        } else if (typeof window.mermaid.init === 'function') {
+          window.mermaid.init(undefined, mermaidDiv);
+        }
+      } catch (e) {
+        // Ignore rendering errors; the UI still works without the diagram.
+      }
+    }
+
+    function setWorkflowUi(currentText, nextText, activeNode, nextNode) {
+      const steps = document.getElementById('workflowSteps');
+      if (steps) {
+        steps.textContent = `Aktuell: ${currentText || '—'} | Als nächstes: ${nextText || '—'}`;
+      }
+      renderWorkflow(activeNode, nextNode);
+    }
+
+    function workflowExplain(nodeId) {
+      const explain = {
+        KIS: { title: 'KIS', text: 'Patientenaufnahme / Stammdaten. Von hier kommen typischerweise HL7 ADT Events.' },
+        LIS: { title: 'LIS', text: 'Labor-System. Liefert z.B. Kreatinin als HL7 ORU Resultat.' },
+        RIS: { title: 'RIS', text: 'Radiologie-Informationssystem. Auftrag/Order (HL7 ORM) und Worklist.' },
+        MWLServer: { title: 'MWL', text: 'DICOM Modality Worklist (SCP). Modalitäten fragen hier die Arbeitsliste ab.' },
+        Modality: { title: 'CT', text: 'Modalität (CT Konsole). Ruft MWL ab und sendet Bilder via DICOM C-STORE.' },
+        PACS: { title: 'PACS', text: 'PACS/Archiv. Speichert DICOM und liefert Query/Retrieve.' },
+        Workstation: { title: 'Workstation', text: 'Befundungs-Workstation. Sucht Studien (C-FIND) und holt sie (C-MOVE).' },
+        ADT: { title: '1. HL7 ADT', text: 'ADT = Aufnahme/Patientenstammdaten (Admission/Discharge/Transfer).' },
+        ORU: { title: '2. HL7 ORU', text: 'ORU = Befund/Resultat (Observation Result).' },
+        ORM: { title: '3. HL7 ORM', text: 'ORM = Auftrag/Order (Order Message).' },
+        MWL: { title: '4. DICOM C-FIND (MWL)', text: 'CT fragt geplante Untersuchungen ab (Worklist Pull).' },
+        STORE: { title: '5. DICOM C-STORE', text: 'Modalität sendet Bilder/Instanzen an das PACS.' },
+        QFIND: { title: '6. DICOM C-FIND (Study)', text: 'Workstation sucht Studien im PACS (Study Root Query).' },
+        CMOVE: { title: '7. DICOM C-MOVE', text: 'Workstation holt Studie. PACS sendet Instanzen an den Empfänger (Store SCP).' },
+      };
+
+      const key = String(nodeId || '').trim();
+      const info = explain[key];
+      const panel = document.getElementById('workflowExplainPanel');
+      if (!panel) return;
+
+      if (!info) {
+        panel.style.display = 'none';
+        panel.innerHTML = '';
+        return;
+      }
+
+      panel.style.display = 'block';
+      panel.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">${info.title}</div><div>${info.text}</div>`;
+
+      const checkbox = document.getElementById('workflowDrawer');
+      if (checkbox) checkbox.checked = true;
+      try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+    }
+
+    function workflowTraceAdd(currentText, nextText, activeNode, nextNode) {
+      const entry = {
+        ts: new Date().toISOString(),
+        page: window.location.pathname + window.location.search,
+        cur: currentText || '',
+        nxt: nextText || '',
+        a: activeNode || '',
+        n: nextNode || '',
+      };
+
+      try {
+        const key = 'workflowTrace';
+        const raw = localStorage.getItem(key);
+        const list = raw ? JSON.parse(raw) : [];
+        const last = Array.isArray(list) && list.length ? list[list.length - 1] : null;
+        const same = last && last.cur === entry.cur && last.nxt === entry.nxt && last.a === entry.a && last.n === entry.n && last.page === entry.page;
+        if (!same) {
+          const next = Array.isArray(list) ? list : [];
+          next.push(entry);
+          while (next.length > 20) next.shift();
+          localStorage.setItem(key, JSON.stringify(next));
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function workflowTraceRender() {
+      const host = document.getElementById('workflowTrace');
+      if (!host) return;
+      let list = [];
+      try {
+        const raw = localStorage.getItem('workflowTrace');
+        list = raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        list = [];
+      }
+      if (!Array.isArray(list) || list.length === 0) {
+        host.innerHTML = '<div style="color:#546e7a; font-size:0.85em;">Noch keine Events.</div>';
+        return;
+      }
+
+      const items = list.slice(-10).reverse();
+      host.innerHTML = items.map((it) => {
+        const when = (it.ts || '').replace('T', ' ').slice(0, 19);
+        const label = `${when} — ${it.cur || '—'} → ${it.nxt || '—'}`;
+        const href = it.page || '/';
+        return `<button type="button" data-href="${href}" style="width:100%; text-align:left; border:1px solid #cfd8dc; background:#fff; border-radius:8px; padding:6px 8px; margin:4px 0; cursor:pointer;">${label}</button>`;
+      }).join('');
+
+      host.querySelectorAll('button[data-href]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const href = btn.getAttribute('data-href');
+          if (href) window.location.href = href;
+        });
+      });
+    }
+
+    function workflowBindStepButtons() {
+      const map = {
+        '1': '/',
+        '2': '/',
+        '3': '/',
+        '4': '/modality',
+        '5': '/modality',
+        '6': '/viewer',
+        '7': '/viewer',
+      };
+      document.querySelectorAll('[data-wf-step]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const step = btn.getAttribute('data-wf-step') || '';
+          const href = map[step] || '/';
+          try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+          window.location.href = href;
+        });
+      });
+    }
+
+    const _setWorkflowUiOriginal = setWorkflowUi;
+    setWorkflowUi = function(currentText, nextText, activeNode, nextNode) {
+      _setWorkflowUiOriginal(currentText, nextText, activeNode, nextNode);
+      workflowTraceAdd(currentText, nextText, activeNode, nextNode);
+      workflowTraceRender();
+    };
+  </script>
+</head>
+<body>
+  {% if series %}
+    <a href="/pacs/series/{{ series.get('ID') }}" class="back-btn">&larr; Zurück zur Serie</a>
+  {% elif study %}
+    <a href="/pacs/studies/{{ study.get('ID') }}" class="back-btn">&larr; Zurück zur Studie</a>
+  {% else %}
+    <a href="/pacs" class="back-btn">&larr; Zurück</a>
+  {% endif %}
+
+  <h1>Instanz: Viewer + Metadaten</h1>
+  <p class="note">Aktiver SuS-Code: <strong>{{ student_code }}</strong></p>
+
+  <input id="workflowDrawer" class="workflow-drawer-toggle" type="checkbox">
+  <label class="workflow-drawer-button" for="workflowDrawer">Workflow</label>
+  <aside class="workflow-drawer" aria-label="Workflow">
+    <header>
+      <div>
+        <div class="workflow-drawer-title">Workflow</div>
+        <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current|default('—') }} | Als nächstes: {{ workflow_next|default('—') }}</div>
+      </div>
+      <label class="workflow-drawer-close" for="workflowDrawer">Schliessen</label>
+    </header>
+    <div class="workflow-diagram">
+      <template id="workflowGraphBase">
+flowchart TB
+    classDef system fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
+    classDef backend fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000
+    classDef hl7 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
+    classDef dicom fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef active stroke:#000,stroke-width:4px
+    classDef next stroke-dasharray: 6 3
+
+    KIS["KIS"]
+    RIS["RIS"]
+    LIS["LIS"]
+    MWLServer["MWL"]
+    Modality["CT"]
+    PACS["PACS"]
+    Workstation["Workstation"]
+
+    ADT["1. HL7 ADT"]
+    ORU["2. HL7 ORU"]
+    ORM["3. HL7 ORM"]
+    MWL["4. DICOM C-FIND (MWL)"]
+    STORE["5. DICOM C-STORE"]
+    QFIND["6. DICOM C-FIND (Study)"]
+    CMOVE["7. DICOM C-MOVE"]
+
+    class KIS,RIS,LIS,Modality,Workstation system
+    class MWLServer,PACS backend
+    class ADT,ORU,ORM hl7
+    class MWL,STORE,QFIND,CMOVE dicom
+
+    KIS -.-> ADT -.-> RIS
+    RIS -.-> ORU -.-> LIS
+    RIS -.-> ORM -.-> MWLServer
+    MWLServer --> MWL --> Modality
+    Modality --> STORE --> PACS
+    Workstation --> QFIND --> PACS
+    Workstation --> CMOVE --> PACS
+
+    click KIS workflowExplain "KIS"
+    click RIS workflowExplain "RIS"
+    click LIS workflowExplain "LIS"
+    click MWLServer workflowExplain "MWL"
+    click Modality workflowExplain "CT"
+    click PACS workflowExplain "PACS"
+    click Workstation workflowExplain "Workstation"
+    click ADT workflowExplain "HL7 ADT"
+    click ORU workflowExplain "HL7 ORU"
+    click ORM workflowExplain "HL7 ORM"
+    click MWL workflowExplain "DICOM MWL"
+    click STORE workflowExplain "DICOM C-STORE"
+    click QFIND workflowExplain "DICOM C-FIND"
+    click CMOVE workflowExplain "DICOM C-MOVE"
+      </template>
+
+      <div id="workflowMermaid" class="mermaid"></div>
+
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+        <button type="button" data-wf-step="1" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">1</button>
+        <button type="button" data-wf-step="2" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">2</button>
+        <button type="button" data-wf-step="3" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">3</button>
+        <button type="button" data-wf-step="4" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">4</button>
+        <button type="button" data-wf-step="5" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">5</button>
+        <button type="button" data-wf-step="6" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">6</button>
+        <button type="button" data-wf-step="7" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">7</button>
+      </div>
+
+      <div id="workflowExplainPanel" style="display:none; margin-top:10px; padding:10px; border-radius:10px; border:1px solid #eceff1; background:#fafafa;"></div>
+
+      <div style="margin-top:10px;">
+        <div style="font-weight:700; margin-bottom:6px;">Trace</div>
+        <div id="workflowTrace"></div>
+      </div>
+
+      <script type="application/json" id="workflowStateJson">{{ {'current': (workflow_current|default('')), 'next': (workflow_next|default(''))}|tojson }}</script>
+      <script>
+        document.addEventListener('DOMContentLoaded', () => {
+          workflowBindStepButtons();
+          workflowTraceRender();
+          const stateEl = document.getElementById('workflowStateJson');
+          const state = stateEl ? JSON.parse(stateEl.textContent || '{}') : { current: '', next: '' };
+          const cur = String(state.current || '');
+          const nxt = String(state.next || '');
+          setWorkflowUi(cur || '6. DICOM C-FIND (Study)', nxt || '7. DICOM C-MOVE', 'QFIND', 'CMOVE');
+        });
+      </script>
+    </div>
+    <small>Hinweis: Das Diagramm wird im Browser gerendert (Mermaid). Wenn Sie offline sind, kann es sein, dass das Diagramm nicht angezeigt wird.</small>
+  </aside>
+
+  {% if msg %}
+    <div class="msg">{{ msg }}</div>
+  {% endif %}
+
+  {% if instance %}
+    {% set iid = instance.get('ID') %}
+    <div class="layout">
+      <div class="panel">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+          {% if instance_ids and instance_ids|length > 0 %}
+            {% if i > 0 %}
+              <a class="btn" href="/pacs/instances/{{ instance_ids[i-1] }}?series={{ series.get('ID') }}">&larr; Vorheriges</a>
+            {% else %}
+              <span class="btn secondary" style="opacity:0.6; cursor:default;">&larr; Vorheriges</span>
+            {% endif %}
+
+            <span class="note">Bild {{ i + 1 }} / {{ instance_ids|length }}</span>
+
+            {% if i + 1 < instance_ids|length %}
+              <a class="btn" href="/pacs/instances/{{ instance_ids[i+1] }}?series={{ series.get('ID') }}">Nächstes &rarr;</a>
+            {% else %}
+              <span class="btn secondary" style="opacity:0.6; cursor:default;">Nächstes &rarr;</span>
+            {% endif %}
+          {% endif %}
+
+          <a class="btn secondary" href="/pacs/studies/{{ study.get('ID') }}">Studie</a>
+          <a class="btn secondary" href="/pacs/series/{{ series.get('ID') }}">Serie</a>
+        </div>
+
+        <img src="/pacs/instances/{{ iid }}/preview.png" alt="DICOM preview" />
+        <p class="note">Wenn kein Bild erscheint: häufig komprimierte DICOMs (z.B. JPEG2000) oder nicht unterstützte Pixel-Daten.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Metadaten (DICOM Tags)</h2>
+        <div class="note">Jede Zeile zeigt die Hex-Adresse (z.B. <code>(0010,0020)</code>), VR und Wert.</div>
+
+        <div style="height: 10px;"></div>
+
+        <div style="border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: white;">
+          <h3 style="margin: 0 0 8px 0;">Metadaten ändern / hinzufügen</h3>
+          <form method="post" action="/pacs/instances/{{ iid }}/edit_metadata">
+            <div class="note" style="margin-bottom: 8px;">
+              Tag als Hex (<code>(0010,0010)</code> oder <code>0010,0010</code>) oder Keyword (z.B. <code>PatientName</code>).
+              Wenn der Tag noch nicht existiert, VR angeben (z.B. <code>PN</code>, <code>LO</code>, <code>SH</code>, <code>DA</code>).
+              <br>
+              Doku (vollständige Liste):
+              <a href="https://dicom.nema.org/medical/dicom/current/output/html/part06.html" target="_blank" rel="noopener noreferrer">DICOM Data Dictionary (PS3.6)</a>
+              (Tags/Keywords/VR)
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div>
+                <label class="note" for="tagPreset">Tag (Dropdown)</label>
+                <select id="tagPreset" style="width:100%; padding:8px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                  <option value="">— auswählen —</option>
+                  <option data-tag="(0010,0010)" data-keyword="PatientName" data-vr="PN">PatientName (0010,0010) — PN</option>
+                  <option data-tag="(0010,0020)" data-keyword="PatientID" data-vr="LO">PatientID (0010,0020) — LO</option>
+                  <option data-tag="(0008,0050)" data-keyword="AccessionNumber" data-vr="SH">AccessionNumber (0008,0050) — SH</option>
+                  <option data-tag="(0008,0060)" data-keyword="Modality" data-vr="CS">Modality (0008,0060) — CS</option>
+                  <option data-tag="(0008,0020)" data-keyword="StudyDate" data-vr="DA">StudyDate (0008,0020) — DA</option>
+                  <option data-tag="(0008,0030)" data-keyword="StudyTime" data-vr="TM">StudyTime (0008,0030) — TM</option>
+                  <option data-tag="(0008,1030)" data-keyword="StudyDescription" data-vr="LO">StudyDescription (0008,1030) — LO</option>
+                  <option data-tag="(0008,103E)" data-keyword="SeriesDescription" data-vr="LO">SeriesDescription (0008,103E) — LO</option>
+                  <option data-tag="(0018,0015)" data-keyword="BodyPartExamined" data-vr="CS">BodyPartExamined (0018,0015) — CS</option>
+                  <option data-tag="(0008,0090)" data-keyword="ReferringPhysicianName" data-vr="PN">ReferringPhysicianName (0008,0090) — PN</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="note" for="vrPreset">VR (Dropdown)</label>
+                <select id="vrPreset" style="width:100%; padding:8px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                  <option value="">— automatisch / leer —</option>
+                  <option value="PN">PN (Person Name)</option>
+                  <option value="LO">LO (Long String)</option>
+                  <option value="SH">SH (Short String)</option>
+                  <option value="CS">CS (Code String)</option>
+                  <option value="DA">DA (Date)</option>
+                  <option value="TM">TM (Time)</option>
+                  <option value="UI">UI (Unique Identifier)</option>
+                  <option value="IS">IS (Integer String)</option>
+                  <option value="DS">DS (Decimal String)</option>
+                  <option value="ST">ST (Short Text)</option>
+                  <option value="LT">LT (Long Text)</option>
+                  <option value="UT">UT (Unlimited Text)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div>
+                <label class="note" for="tagInput">Tag (Hex)</label>
+                <input id="tagInput" name="tag" placeholder="(0010,0010)" style="width:100%; padding:8px; border-radius: 8px; border: 1px solid #e5e7eb;" />
+              </div>
+              <div>
+                <label class="note" for="keywordInput">Keyword (optional)</label>
+                <input id="keywordInput" name="keyword" placeholder="PatientName" style="width:100%; padding:8px; border-radius: 8px; border: 1px solid #e5e7eb;" />
+              </div>
+              <div>
+                <label class="note" for="vrInput">VR (optional)</label>
+                <input id="vrInput" name="vr" placeholder="PN / LO / SH / DA / TM / UI" style="width:100%; padding:8px; border-radius: 8px; border: 1px solid #e5e7eb;" />
+              </div>
+              <div>
+                <label class="note" for="valueInput">Value</label>
+                <input id="valueInput" name="value" placeholder="Neuer Wert" style="width:100%; padding:8px; border-radius: 8px; border: 1px solid #e5e7eb;" required />
+              </div>
+            </div>
+            <div style="height: 10px;"></div>
+            <button class="btn" type="submit">Speichern (erstellt neue Instanz)</button>
+          </form>
+
+          <script>
+            (function() {
+              const preset = document.getElementById('tagPreset');
+              const tagInput = document.getElementById('tagInput');
+              const keywordInput = document.getElementById('keywordInput');
+              const vrInput = document.getElementById('vrInput');
+              const vrPreset = document.getElementById('vrPreset');
+
+              if (preset) {
+                preset.addEventListener('change', () => {
+                  const opt = preset.selectedOptions && preset.selectedOptions[0];
+                  if (!opt) return;
+                  const t = opt.getAttribute('data-tag') || '';
+                  const k = opt.getAttribute('data-keyword') || '';
+                  const v = opt.getAttribute('data-vr') || '';
+                  if (t && tagInput) tagInput.value = t;
+                  if (k && keywordInput) keywordInput.value = k;
+                  if (v && vrInput) vrInput.value = v;
+                  if (v && vrPreset) vrPreset.value = v;
+                });
+              }
+
+              if (vrPreset) {
+                vrPreset.addEventListener('change', () => {
+                  const v = vrPreset.value || '';
+                  if (vrInput) vrInput.value = v;
+                });
+              }
+            })();
+          </script>
+        </div>
+
+        {% if tags and tags|length > 0 %}
+          <div style="max-height: 70vh; overflow:auto; border-radius: 8px; border: 1px solid #e5e7eb;">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 140px;">Tag</th>
+                  <th style="width: 70px;">VR</th>
+                  <th style="width: 240px;">Name</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in tags %}
+                  <tr>
+                    <td class="mono">{{ row.tag }}</td>
+                    <td class="mono">{{ row.vr }}</td>
+                    <td>{{ row.name }}</td>
+                    <td class="mono">{{ row.value }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="note"><i>Keine Tags verfügbar.</i></p>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <p class="note"><i>Keine Daten.</i></p>
+  {% endif %}
+</body>
+</html>

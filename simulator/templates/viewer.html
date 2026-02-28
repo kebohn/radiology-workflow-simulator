@@ -8,8 +8,8 @@
         .workflow { background: #fff; border: 1px solid #cfd8dc; padding: 12px; margin-bottom: 20px; border-radius: 5px; }
         .workflow small { color: #546e7a; }
         .workflow-steps { color: #546e7a; font-weight: 400; font-size: 0.85em; }
-        .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-        .workflow-diagram svg { width: 100%; height: 100%; }
+        .workflow-diagram { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eceff1; flex: 1 1 auto; min-height: 0; overflow: auto; }
+        .workflow-diagram svg { width: 100%; height: auto; }
         .workflow-drawer-toggle { position: absolute; left: -9999px; }
         .workflow-drawer-button {
             position: fixed;
@@ -72,7 +72,7 @@
     </style>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script>
-      mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+            mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
     </script>
         <script>
             document.addEventListener('DOMContentLoaded', () => {
@@ -84,6 +84,160 @@
                     localStorage.setItem(storageKey, checkbox.checked ? '1' : '0');
                 });
             });
+        </script>
+        <script>
+            function renderWorkflow(activeNode, nextNode) {
+                const base = document.getElementById('workflowGraphBase');
+                const mermaidDiv = document.getElementById('workflowMermaid');
+                if (!base || !mermaidDiv || !window.mermaid) return;
+
+                let highlight = '';
+                if (activeNode) highlight += `\n  class ${activeNode} active`;
+                if (nextNode) highlight += `\n  class ${nextNode} next`;
+
+                mermaidDiv.removeAttribute('data-processed');
+                mermaidDiv.innerHTML = base.innerHTML.trim() + highlight + "\n";
+
+                try {
+                    if (typeof window.mermaid.run === 'function') {
+                        window.mermaid.run({ nodes: [mermaidDiv] });
+                    } else if (typeof window.mermaid.init === 'function') {
+                        window.mermaid.init(undefined, mermaidDiv);
+                    }
+                } catch (e) {
+                    // Ignore rendering errors; the UI still works without the diagram.
+                }
+            }
+
+            function setWorkflowUi(currentText, nextText, activeNode, nextNode) {
+                const steps = document.getElementById('workflowSteps');
+                if (steps) {
+                    steps.textContent = `Aktuell: ${currentText || '—'} | Als nächstes: ${nextText || '—'}`;
+                }
+                renderWorkflow(activeNode, nextNode);
+            }
+
+            function workflowExplain(nodeId) {
+                const explain = {
+                    KIS: { title: 'KIS', text: 'Patientenaufnahme / Stammdaten. Von hier kommen typischerweise HL7 ADT Events.' },
+                    LIS: { title: 'LIS', text: 'Labor-System. Liefert z.B. Kreatinin als HL7 ORU Resultat.' },
+                    RIS: { title: 'RIS', text: 'Radiologie-Informationssystem. Auftrag/Order (HL7 ORM) und Worklist.' },
+                    MWLServer: { title: 'MWL', text: 'DICOM Modality Worklist (SCP). Modalitäten fragen hier die Arbeitsliste ab.' },
+                    Modality: { title: 'CT', text: 'Modalität (CT Konsole). Ruft MWL ab und sendet Bilder via DICOM C-STORE.' },
+                    PACS: { title: 'PACS', text: 'PACS/Archiv. Speichert DICOM und liefert Query/Retrieve.' },
+                    Workstation: { title: 'Workstation', text: 'Befundungs-Workstation. Sucht Studien (C-FIND) und holt sie (C-MOVE).' },
+                    ADT: { title: '1. HL7 ADT', text: 'ADT = Aufnahme/Patientenstammdaten (Admission/Discharge/Transfer).' },
+                    ORU: { title: '2. HL7 ORU', text: 'ORU = Befund/Resultat (Observation Result).' },
+                    ORM: { title: '3. HL7 ORM', text: 'ORM = Auftrag/Order (Order Message).' },
+                    MWL: { title: '4. DICOM C-FIND (MWL)', text: 'CT fragt geplante Untersuchungen ab (Worklist Pull).' },
+                    STORE: { title: '5. DICOM C-STORE', text: 'Modalität sendet Bilder/Instanzen an das PACS.' },
+                    QFIND: { title: '6. DICOM C-FIND (Study)', text: 'Workstation sucht Studien im PACS (Study Root Query).' },
+                    CMOVE: { title: '7. DICOM C-MOVE', text: 'Workstation holt Studie. PACS sendet Instanzen an den Empfänger (Store SCP).' },
+                };
+
+                const key = String(nodeId || '').trim();
+                const info = explain[key];
+                const panel = document.getElementById('workflowExplainPanel');
+                if (!panel) return;
+
+                if (!info) {
+                    panel.style.display = 'none';
+                    panel.innerHTML = '';
+                    return;
+                }
+
+                panel.style.display = 'block';
+                panel.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">${info.title}</div><div>${info.text}</div>`;
+
+                const checkbox = document.getElementById('workflowDrawer');
+                if (checkbox) checkbox.checked = true;
+                try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+            }
+
+            function workflowTraceAdd(currentText, nextText, activeNode, nextNode) {
+                const entry = {
+                    ts: new Date().toISOString(),
+                    page: window.location.pathname + window.location.search,
+                    cur: currentText || '',
+                    nxt: nextText || '',
+                    a: activeNode || '',
+                    n: nextNode || '',
+                };
+
+                try {
+                    const key = 'workflowTrace';
+                    const raw = localStorage.getItem(key);
+                    const list = raw ? JSON.parse(raw) : [];
+                    const last = Array.isArray(list) && list.length ? list[list.length - 1] : null;
+                    const same = last && last.cur === entry.cur && last.nxt === entry.nxt && last.a === entry.a && last.n === entry.n && last.page === entry.page;
+                    if (!same) {
+                        const next = Array.isArray(list) ? list : [];
+                        next.push(entry);
+                        while (next.length > 20) next.shift();
+                        localStorage.setItem(key, JSON.stringify(next));
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            function workflowTraceRender() {
+                const host = document.getElementById('workflowTrace');
+                if (!host) return;
+                let list = [];
+                try {
+                    const raw = localStorage.getItem('workflowTrace');
+                    list = raw ? JSON.parse(raw) : [];
+                } catch (e) {
+                    list = [];
+                }
+                if (!Array.isArray(list) || list.length === 0) {
+                    host.innerHTML = '<div style="color:#546e7a; font-size:0.85em;">Noch keine Events.</div>';
+                    return;
+                }
+
+                const items = list.slice(-10).reverse();
+                host.innerHTML = items.map((it) => {
+                    const when = (it.ts || '').replace('T', ' ').slice(0, 19);
+                    const label = `${when} — ${it.cur || '—'} → ${it.nxt || '—'}`;
+                    const href = it.page || '/';
+                    return `<button type="button" data-href="${href}" style="width:100%; text-align:left; border:1px solid #cfd8dc; background:#fff; border-radius:8px; padding:6px 8px; margin:4px 0; cursor:pointer;">${label}</button>`;
+                }).join('');
+
+                host.querySelectorAll('button[data-href]').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const href = btn.getAttribute('data-href');
+                        if (href) window.location.href = href;
+                    });
+                });
+            }
+
+            function workflowBindStepButtons() {
+                const map = {
+                    '1': '/',
+                    '2': '/',
+                    '3': '/',
+                    '4': '/modality',
+                    '5': '/modality',
+                    '6': '/viewer',
+                    '7': '/viewer',
+                };
+                document.querySelectorAll('[data-wf-step]').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const step = btn.getAttribute('data-wf-step') || '';
+                        const href = map[step] || '/';
+                        try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+                        window.location.href = href;
+                    });
+                });
+            }
+
+            const _setWorkflowUiOriginal = setWorkflowUi;
+            setWorkflowUi = function(currentText, nextText, activeNode, nextNode) {
+                _setWorkflowUiOriginal(currentText, nextText, activeNode, nextNode);
+                workflowTraceAdd(currentText, nextText, activeNode, nextNode);
+                workflowTraceRender();
+            };
         </script>
 </head>
 <body>
@@ -101,53 +255,101 @@
         <header>
             <div>
                 <div class="workflow-drawer-title">Workflow</div>
-                <div class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
+                <div id="workflowSteps" class="workflow-steps">Aktuell: {{ workflow_current or '—' }} | Als nächstes: {{ workflow_next or '—' }}</div>
             </div>
             <label class="workflow-drawer-close" for="workflowDrawer">Schliessen</label>
         </header>
         <div class="workflow-diagram">
-            <div class="mermaid">
+            <template id="workflowGraphBase">
 flowchart TB
-  classDef system fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
-  classDef backend fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000
-  classDef hl7 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
-  classDef dicom fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
-  classDef active stroke:#000,stroke-width:4px
-  classDef next stroke-dasharray: 6 3
+    classDef system fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000
+    classDef backend fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000
+    classDef hl7 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
+    classDef dicom fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef active stroke:#000,stroke-width:4px
+    classDef next stroke-dasharray: 6 3
 
-  KIS["KIS"]
-  RIS["RIS"]
-  MWLServer["MWL"]
-  Modality["CT"]
-  PACS["PACS"]
-  Workstation["Workstation"]
+    KIS["KIS"]
+    RIS["RIS"]
+    LIS["LIS"]
+    MWLServer["MWL"]
+    Modality["CT"]
+    PACS["PACS"]
+    Workstation["Workstation"]
 
-  ORM["HL7 ORM"]
-  QFIND["DICOM C-FIND (Study)"]
-  CMOVE["DICOM C-MOVE"]
-    WSSTORE["DICOM C-STORE (Rückkanal)"]
+    ADT["1. HL7 ADT"]
+    ORU["2. HL7 ORU"]
+    ORM["3. HL7 ORM"]
+    MWL["4. DICOM C-FIND (MWL)"]
+    STORE["5. DICOM C-STORE"]
+    QFIND["6. DICOM C-FIND (Study)"]
+    CMOVE["7. DICOM C-MOVE"]
 
-  class KIS,RIS,Modality,Workstation system
-  class MWLServer,PACS backend
-  class ORM hl7
-  class QFIND,CMOVE,WSSTORE dicom
+    class KIS,RIS,LIS,Modality,Workstation system
+    class MWLServer,PACS backend
+    class ADT,ORU,ORM hl7
+    class MWL,STORE,QFIND,CMOVE dicom
 
-  RIS -.-> ORM -.-> MWLServer
-  MWLServer --> Modality
-  Modality --> PACS
-  Workstation --> QFIND --> PACS
-  Workstation --> CMOVE --> PACS
-  PACS --> WSSTORE --> Workstation
+    KIS -.-> ADT -.-> RIS
+    RIS -.-> ORU -.-> LIS
+    RIS -.-> ORM -.-> MWLServer
+    MWLServer --> MWL --> Modality
+    Modality --> STORE --> PACS
+    Workstation --> QFIND --> PACS
+    Workstation --> CMOVE --> PACS
 
-  %% Highlight: Workstation
-  {% if workflow_current and 'Retrieve' in workflow_current %}
-  class CMOVE active
-  class WSSTORE next
-  {% else %}
-  class QFIND active
-  class CMOVE next
-  {% endif %}
+    click KIS workflowExplain "KIS"
+    click RIS workflowExplain "RIS"
+    click LIS workflowExplain "LIS"
+    click MWLServer workflowExplain "MWL"
+    click Modality workflowExplain "CT"
+    click PACS workflowExplain "PACS"
+    click Workstation workflowExplain "Workstation"
+    click ADT workflowExplain "HL7 ADT"
+    click ORU workflowExplain "HL7 ORU"
+    click ORM workflowExplain "HL7 ORM"
+    click MWL workflowExplain "DICOM MWL"
+    click STORE workflowExplain "DICOM C-STORE"
+    click QFIND workflowExplain "DICOM C-FIND"
+    click CMOVE workflowExplain "DICOM C-MOVE"
+            </template>
+
+            <div id="workflowMermaid" class="mermaid"></div>
+
+            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+                <button type="button" data-wf-step="1" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">1</button>
+                <button type="button" data-wf-step="2" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">2</button>
+                <button type="button" data-wf-step="3" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">3</button>
+                <button type="button" data-wf-step="4" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">4</button>
+                <button type="button" data-wf-step="5" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">5</button>
+                <button type="button" data-wf-step="6" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">6</button>
+                <button type="button" data-wf-step="7" style="border:1px solid #cfd8dc; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer;">7</button>
             </div>
+
+            <div id="workflowExplainPanel" style="display:none; margin-top:10px; padding:10px; border-radius:10px; border:1px solid #eceff1; background:#fafafa;"></div>
+
+            <div style="margin-top:10px;">
+                <div style="font-weight:700; margin-bottom:6px;">Trace</div>
+                <div id="workflowTrace"></div>
+            </div>
+
+            <script type="application/json" id="workflowStateJson">{{ {'current': workflow_current or '', 'next': workflow_next or ''}|tojson }}</script>
+            <script>
+                document.addEventListener('DOMContentLoaded', () => {
+                    workflowBindStepButtons();
+                    workflowTraceRender();
+                    const stateEl = document.getElementById('workflowStateJson');
+                    const state = stateEl ? JSON.parse(stateEl.textContent || '{}') : { current: '', next: '' };
+                    const cur = String(state.current || '');
+                    const nxt = String(state.next || '');
+
+                    if (cur && cur.toLowerCase().includes('retrieve')) {
+                        setWorkflowUi(cur || '7. DICOM C-MOVE', nxt || '—', 'CMOVE', null);
+                    } else {
+                        setWorkflowUi(cur || '6. DICOM C-FIND (Study)', nxt || '7. DICOM C-MOVE', 'QFIND', 'CMOVE');
+                    }
+                });
+            </script>
         </div>
     </aside>
     
@@ -168,6 +370,7 @@ flowchart TB
                     <th>Studien-Datum</th>
                     <th>Modalität</th>
                     <th>Aktion</th>
+                    <th>Viewer</th>
                 </tr>
             </thead>
             <tbody>
@@ -182,6 +385,12 @@ flowchart TB
                             <input type="hidden" name="study_uid" value="{{ study.StudyInstanceUID }}">
                             <button type="submit">LADEN (C-MOVE)</button>
                         </form>
+                    </td>
+                    <td style="white-space: nowrap;">
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <a href="/pacs/open_by_uid?study_uid={{ study.StudyInstanceUID }}"><button type="button" style="background:#1565c0;">Öffnen</button></a>
+                            <a href="/pacs/open_first_instance_by_uid?study_uid={{ study.StudyInstanceUID }}"><button type="button" style="background:#455a64;">Metadaten</button></a>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

@@ -77,7 +77,7 @@ cd radiology-workflow-simulator
 cp .env.server.example .env
 ```
 
-Dann `.env` editieren (mindestens `FLASK_SECRET_KEY` und `ADMIN_PASSWORD` setzen).
+Dann `.env` editieren (mindestens `FLASK_SECRET_KEY` und `ADMIN_PASSHASH` setzen).
 
 Wichtig für HTTPS (Reverse Proxy):
 - Setze `SIM_DOMAIN` auf einen Hostnamen, z.B. `sim.example.org`.
@@ -112,9 +112,14 @@ docker compose -f docker-compose.server.yml up -d
 
 ## Betrieb für SuS
 
-- Einmalig als Trainer: `http://SERVER-IP/admin` öffnen, mit `ADMIN_PASSWORD` einloggen und Codes prüfen/generieren.
+- Einmalig als Trainer: `https://<SIM_DOMAIN>/admin` öffnen, mit Benutzer `admin` + Passwort einloggen und Codes prüfen/generieren.
 - SuS bekommen jeweils einen Code oder direkt den Join-Link `/join/<CODE>`.
 - Ohne gesetzten Code landen SuS immer zuerst auf `/welcome`.
+
+PACS-Ansicht für SuS (gefiltert):
+- Im Simulator gibt es eine Seite `/pacs` (Button: "PACS (SuS) öffnen (gefiltert)").
+- Diese Ansicht zeigt Metadaten + einfachen Viewer, gefiltert nach dem SuS-Code (PatientID Prefix).
+- Dadurch musst du Orthanc nicht öffentlich exponieren, damit SuS Bilder/Metadaten sehen.
 
 ## Trainer: Orthanc UI trotzdem nutzen
 
@@ -150,7 +155,7 @@ Warum Subdomain (statt `/orthanc`)? Orthancs Web-UI nutzt an vielen Stellen abso
 
 3) Setze einen Basic-Auth-Zugang (damit Orthanc nicht offen im Internet steht):
 
-- `ORTHANC_PROXY_USER=sus`
+- `ORTHANC_PROXY_USER=admin`
 - `ORTHANC_PROXY_PASSHASH=<bcrypt-hash>`
 
 Hash erzeugen:
@@ -167,7 +172,11 @@ Tipp ohne eigenes DNS: `orthanc.<EC2_PUBLIC_IP>.sslip.io` zeigt automatisch auf 
 
 ### SuS-Zugang (wenn Orthanc für alle SuS sichtbar sein soll)
 
-Wenn du Orthanc für alle SuS erreichbar machst, gib ihnen den gemeinsamen Basic-Auth-Login (z.B. User `sus` + Passwort, das du selbst setzt). Diese Zugangsdaten stehen **nicht** im Repo, sondern nur in deiner Server-Umgebung (`ORTHANC_PROXY_*`).
+Wenn du Orthanc für alle SuS erreichbar machst, gib ihnen den gemeinsamen Basic-Auth-Login (User `admin` + Passwort, das du selbst setzt). Diese Zugangsdaten stehen **nicht** im Repo, sondern nur in deiner Server-Umgebung (`ORTHANC_PROXY_*`).
+
+Tipp: Du kannst denselben bcrypt Hash auch für `/admin` verwenden:
+- `ADMIN_USER=admin`
+- `ADMIN_PASSHASH=<derselbe bcrypt-hash wie ORTHANC_PROXY_PASSHASH>`
 Im Repo-Ordner:
 
 ```
