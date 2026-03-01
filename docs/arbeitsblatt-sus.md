@@ -146,7 +146,7 @@ Notiere:
 
 ---
 
-## Aufgabe 7 (Optional): Befundung auf der Workstation (HL7 ORU^R01)
+## Aufgabe 7: Befundung auf der Workstation (HL7 ORU^R01)
 
 Voraussetzung: Du hast in Aufgabe 6 Bilder empfangen (C-STORE Cache ist nicht leer).
 
@@ -161,6 +161,30 @@ Voraussetzung: Du hast in Aufgabe 6 Bilder empfangen (C-STORE Cache ist nicht le
 Notiere:
 - Welche Patientendaten tauchen in der ORU wieder auf?
 - Wo (grob) findest du die `StudyInstanceUID` im Text?
+
+---
+
+## Aufgabe 8: Fehlerfall-Training (Teamaufgabe)
+
+Ziel: Ihr übt typische Situationen aus dem Alltag. Nutzt im Dashboard die Kachel **"Fehlerfälle (Training)"** oder den **Workflow-Drawer** als Checkliste.
+
+### Fehlerfall A: Worklist ist leer
+
+1) Geht zur CT-Seite und ruft die Worklist ab.
+2) Wenn die Liste leer ist (oder ihr es provozieren wollt): Prüft, ob ihr wirklich einen Auftrag freigegeben habt (HL7 ORM).
+
+Notiere:
+- Welche zwei Voraussetzungen müssen erfüllt sein, damit ein Worklist-Eintrag sinnvoll erscheint?
+- Welche Nummer ist für die Zuordnung Auftrag <-> Worklist besonders wichtig (Stichwort: Accession)?
+
+### Fehlerfall B: C-MOVE ohne Empfang (Cache bleibt leer)
+
+1) Startet in der Workstation ein Retrieve (C-MOVE).
+2) Wenn im Cache nichts auftaucht: Wartet kurz und aktualisiert die Workstation-Seite.
+
+Notiere (konzeptionell):
+- Nenne zwei plausible Ursachen, warum nach einem C-MOVE keine Bilder im Empfangs-Cache erscheinen.
+- Welche einfache Prüfung würdest du als erstes machen (z.B. C-ECHO)?
 
 ---
 

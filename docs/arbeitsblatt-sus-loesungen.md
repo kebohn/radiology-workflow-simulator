@@ -84,13 +84,34 @@ Hinweis: Das sind Musterlösungen. Je nach Daten (PID, Kreatinin, DICOM-Dateien)
 
 ---
 
-## Aufgabe 7 (Optional): Befundung auf der Workstation (HL7 ORU^R01)
+## Aufgabe 7: Befundung auf der Workstation (HL7 ORU^R01)
 
 - **Welche Patientendaten tauchen in der ORU wieder auf?** Im Segment `PID` stehen `PatientID` und `PatientName`.
 - **Wo finde ich die StudyInstanceUID?** In der Demo-ORU steht sie als eigener Eintrag im `OBX`-Segment mit Kennung `STUDYUID`.
   - Beispiel: `OBX|2|ST|STUDYUID||<StudyInstanceUID>`
 
 ---
+
+  ## Aufgabe 8: Fehlerfall-Training (Teamaufgabe)
+
+  ### Fehlerfall A: Worklist ist leer
+
+  - **Welche zwei Voraussetzungen müssen erfüllt sein, damit ein Worklist-Eintrag sinnvoll erscheint?**
+    - Patient ist im KIS angelegt (HL7 ADT vorhanden, PID bekannt).
+    - Auftrag ist im RIS freigegeben (HL7 ORM) und hat eine Accession.
+  - **Welche Nummer ist für die Zuordnung Auftrag <-> Worklist besonders wichtig (Stichwort: Accession)?**
+    - Die **AccessionNumber** (DICOM (0008,0050)) bzw. die Auftragsnummer aus HL7.
+
+  ### Fehlerfall B: C-MOVE ohne Empfang (Cache bleibt leer)
+
+  - **Zwei plausible Ursachen:**
+    - Transfer ist noch nicht fertig (C-MOVE ist asynchron) oder Seite wurde nicht aktualisiert.
+    - Technisch passt das Ziel nicht: Empfänger-AE Title/Host/Port stimmen nicht, oder das PACS kennt die Ziel-AE nicht, daher scheitert der C-STORE Rückkanal.
+    - (Alternativ ebenfalls plausibel) Falsche Studie ausgewählt (StudyInstanceUID passt nicht).
+  - **Welche einfache Prüfung zuerst (z.B. C-ECHO)?**
+    - C-ECHO (PACS erreichbar?) und danach die Konfiguration der Ziel-AE prüfen (AE Title/Port) bzw. ob der Store-SCP läuft.
+
+  ---
 
 ## Reflexion (kurz) – Musterzuordnung
 

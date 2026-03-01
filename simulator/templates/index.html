@@ -180,6 +180,50 @@
                 try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
             }
 
+            function workflowShowTroubleshooting(caseId) {
+                const panel = document.getElementById('workflowExplainPanel');
+                if (!panel) return;
+
+                const cases = {
+                    worklist_empty: {
+                        title: 'Fehlerfall: Worklist ist leer',
+                        html: `
+                            <div class="protocol-note" style="margin-top:2px;">Typisch in der Praxis und super zum Üben: "Warum sehe ich keinen Patienten / keinen Auftrag an der Modalität?"</div>
+                            <ol style="margin:8px 0 0 18px; padding:0;">
+                                <li>Im Dashboard: Wurde der Patient erfasst (HL7 ADT)?</li>
+                                <li>Wurde der Auftrag freigegeben (HL7 ORM) und eine Accession vergeben?</li>
+                                <li>Auf der CT Seite: Worklist neu abrufen (DICOM C-FIND MWL) und ggf. Seite aktualisieren.</li>
+                                <li>Prüfen: Richtiger SuS-Code gesetzt? (sonst wird gefiltert und du siehst nichts)</li>
+                            </ol>
+                            <div class="protocol-note" style="margin-top:8px;">Merke: Ohne Auftrag (ORM) gibt es oft keinen Worklist-Eintrag.</div>
+                        `,
+                    },
+                    cmove_no_receive: {
+                        title: 'Fehlerfall: C-MOVE gemacht, aber kein Empfang',
+                        html: `
+                            <div class="protocol-note" style="margin-top:2px;">Gefühlt "es passiert nichts". In echt liegt es oft an Timing oder Verbindung.</div>
+                            <ol style="margin:8px 0 0 18px; padding:0;">
+                                <li>Nach Retrieve kurz warten und dann die Workstation-Seite aktualisieren (Transfer ist asynchron).</li>
+                                <li>Prüfen: Ist es wirklich die richtige Studie (StudyInstanceUID) in der Liste?</li>
+                                <li>System-Check: C-ECHO testen (PACS erreichbar?).</li>
+                                <li>Technisch (wenn es dauerhaft leer bleibt): Empfänger-AE (Store SCP) muss für das PACS bekannt sein (AE Title/Port stimmen).</li>
+                            </ol>
+                            <div class="protocol-note" style="margin-top:8px;">Merke: C-MOVE ist Pull, aber die Bilder kommen als C-STORE Rückkanal zur Workstation.</div>
+                        `,
+                    },
+                };
+
+                const info = cases[String(caseId || '')];
+                if (!info) return;
+
+                panel.style.display = 'block';
+                panel.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">${info.title}</div>${info.html}`;
+
+                const checkbox = document.getElementById('workflowDrawer');
+                if (checkbox) checkbox.checked = true;
+                try { localStorage.setItem('workflowDrawerOpen', '1'); } catch (e) {}
+            }
+
             function workflowTraceAdd(currentText, nextText, activeNode, nextNode) {
                 const postToGetMap = {
                     '/set_student': '/',
@@ -397,6 +441,30 @@ flowchart TB
                         </div>
 
                         <div id="workflowExplainPanel" style="display:none; margin-top:10px; padding:10px; border-radius:10px; border:1px solid #eceff1; background:#fafafa;"></div>
+
+                        <div style="margin-top:10px; padding:10px; border-radius:10px; border:1px solid #eceff1; background:#fafafa;">
+                            <div style="font-weight:700; margin-bottom:6px;">Spickzettel: IDs</div>
+                            <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                                <tbody>
+                                    <tr>
+                                        <td style="padding:4px 0; vertical-align:top;"><span class="mono">PatientID / PID</span></td>
+                                        <td style="padding:4px 0;">Identifiziert den Patienten (aus HL7 ADT, taucht in DICOM (0010,0020) wieder auf).</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:4px 0; vertical-align:top;"><span class="mono">Accession</span></td>
+                                        <td style="padding:4px 0;">Identifiziert den Auftrag/Termin (aus HL7 ORM, DICOM (0008,0050)).</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:4px 0; vertical-align:top;"><span class="mono">StudyInstanceUID</span></td>
+                                        <td style="padding:4px 0;">Identifiziert die Studie im PACS (Query/Retrieve; DICOM (0020,000D)).</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding:4px 0; vertical-align:top;"><span class="mono">SOPInstanceUID</span></td>
+                                        <td style="padding:4px 0;">Identifiziert ein einzelnes Bild/Objekt (eine Instanz) in der Serie.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
 
                         <div style="margin-top:10px;">
                             <div style="font-weight:700; margin-bottom:6px;">Trace</div>
@@ -670,6 +738,15 @@ flowchart TB
 
                     <button type="submit">RIS: Auftrag freigeben (HL7 ORM) + Worklist erstellen</button>
                 </form>
+            </div>
+
+            <div class="tile">
+                <h3>Fehlerfälle (Training)</h3>
+                <p class="protocol-note">Zwei typische Situationen aus dem Alltag. Klick zeigt eine kurze Checkliste im Workflow-Panel.</p>
+                <div class="tile-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" onclick="workflowShowTroubleshooting('worklist_empty')" style="background:#fff; color:#263238; border:1px solid #cfd8dc;">Worklist ist leer</button>
+                    <button type="button" onclick="workflowShowTroubleshooting('cmove_no_receive')" style="background:#fff; color:#263238; border:1px solid #cfd8dc;">C-MOVE ohne Empfang</button>
+                </div>
             </div>
 
             <div class="tile wide">
