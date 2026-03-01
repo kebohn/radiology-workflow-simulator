@@ -19,275 +19,73 @@ from typing import Optional
 from io import BytesIO
 
 import requests
-import bcrypt
 
 from pydicom.tag import Tag
 from pydicom.datadict import tag_for_keyword, dictionary_VR
 
+from simlib import admin_auth, dicom_receiver, dicom_utils, orthanc_rest, storage
+from simlib.config import FLASK_SECRET_KEY, MAX_CONTENT_LENGTH, ORTHANC_HOST, ORTHANC_PORT, WORKLIST_DIR
+from simlib.hl7 import (
+    build_hl7_adt_a04,
+    build_hl7_oru_report,
+    build_hl7_qry_q02,
+    hl7_msg_control_id,
+    hl7_timestamp,
+)
+from simlib.students import get_student_code, prefix_for_student, student_code_allowed
+from simlib.util import normalize_student_code, safe_filename_component
+
 app = Flask(__name__)
 
-# IMPORTANT (central server): Set a stable secret via env so sessions survive restarts.
-app.secret_key = (os.environ.get('FLASK_SECRET_KEY') or 'dev-insecure-change-me')
+app.secret_key = FLASK_SECRET_KEY
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
-# Real CT studies can be large. If you hit HTTP 413 (Request Entity Too Large),
-# increase this value.
-app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1 GiB
-
-# --- LIS Simulation ---
-
-STUDENT_CODE_RE = re.compile(r"[^A-Za-z0-9_-]")
-SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
-
-
-def normalize_student_code(raw: Optional[str]) -> str:
-    if not raw:
-        return ""
-    code = str(raw).strip()
-    code = STUDENT_CODE_RE.sub("", code)
-    code = code[:24]
-    return code
-
-DATA_DIR = os.environ.get('DATA_DIR', '/app/data')
-SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
-_SESSIONS_LOCK = threading.Lock()
-
-
-def _ensure_data_dir() -> None:
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-    except Exception:
-        # If this fails, we still want the app to start; session codes just won't persist.
-        pass
-
-
-def _load_session_codes() -> list:
-    _ensure_data_dir()
-    with _SESSIONS_LOCK:
-        try:
-            if not os.path.exists(SESSIONS_FILE):
-                return []
-            with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
-            codes = payload.get('codes', []) if isinstance(payload, dict) else []
-            if not isinstance(codes, list):
-                return []
-            cleaned = []
-            seen = set()
-            for c in codes:
-                cc = normalize_student_code(str(c))
-                if cc and cc not in seen:
-                    seen.add(cc)
-                    cleaned.append(cc)
-            return cleaned
-        except Exception:
-            return []
-
-
-def _save_session_codes(codes: list) -> None:
-    _ensure_data_dir()
-    cleaned = []
-    seen = set()
-    for c in codes or []:
-        cc = normalize_student_code(str(c))
-        if cc and cc not in seen:
-            seen.add(cc)
-            cleaned.append(cc)
-
-    payload = {
-        'generated_at': datetime.datetime.now().isoformat(timespec='seconds'),
-        'count': len(cleaned),
-        'codes': cleaned,
-    }
-
-    with _SESSIONS_LOCK:
-        try:
-            tmp = SESSIONS_FILE + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, SESSIONS_FILE)
-        except Exception:
-            pass
-
-
-def _generate_session_codes(n: int) -> list:
-    n = max(1, min(int(n or 20), 200))
-    out = []
-    seen = set()
-    while len(out) < n:
-        # Example: SUS-3FA9C1 (easy to read, hard to guess)
-        suffix = secrets.token_hex(3).upper()
-        code = normalize_student_code(f"SUS-{suffix}")
-        if code and code not in seen:
-            seen.add(code)
-            out.append(code)
-    return out
+# Auto-generate SuS session codes if requested.
+storage.maybe_auto_generate_sessions()
 
 
 def _admin_user() -> str:
-    return (os.environ.get('ADMIN_USER') or 'admin').strip() or 'admin'
-
-
-def _admin_passhash() -> str:
-    # Prefer dedicated admin passhash; fallback to Orthanc proxy hash so one secret can be used.
-    return (
-        (os.environ.get('ADMIN_PASSHASH') or '').strip()
-        or (os.environ.get('ORTHANC_PROXY_PASSHASH') or '').strip()
-    )
-
-
-def _admin_password() -> str:
-    # Legacy plaintext fallback; prefer _admin_passhash().
-    return (os.environ.get('ADMIN_PASSWORD') or '').strip()
+    return admin_auth.admin_user()
 
 
 def _admin_enabled() -> bool:
-    return bool(_admin_passhash() or _admin_password())
+    return admin_auth.admin_enabled()
 
 
 def _is_admin() -> bool:
-    return bool(session.get('is_admin'))
+    return admin_auth.is_admin()
 
 
 def _require_admin():
-    if not _admin_enabled():
-        return render_template('admin.html', admin_enabled=False, is_admin=False, msg="Admin ist nicht aktiviert (ADMIN_PASSHASH fehlt).")
-    if not _is_admin():
-        return render_template('admin.html', admin_enabled=True, is_admin=False)
-    return None
-
-
-def _maybe_auto_generate_sessions() -> None:
-    raw = (os.environ.get('AUTO_GENERATE_SESSIONS') or '').strip()
-    if not raw:
-        return
-    try:
-        n = int(raw)
-    except Exception:
-        n = 20
-    if n <= 0:
-        return
-    existing = _load_session_codes()
-    if existing:
-        return
-    codes = _generate_session_codes(n)
-    _save_session_codes(codes)
-
-
-_maybe_auto_generate_sessions()
-
-
-def get_student_code() -> str:
-    return normalize_student_code(session.get('student_code'))
+    return admin_auth.require_admin()
 
 
 def _student_code_allowed(code: str) -> bool:
-    # If codes were generated (sessions.json exists and is non-empty), only allow those.
-    allowed = _load_session_codes()
-    if not allowed:
-        return True
-    return code in allowed
+    return student_code_allowed(code)
 
 
-def prefix_for_student(value: Optional[str]) -> str:
-    value = (value or "").strip()
-    code = get_student_code()
-    if not value:
-        return value
-    if not code:
-        return value
-    prefix = f"{code}-"
-    if value.startswith(prefix):
-        return value
-    return f"{code}-{value}"
+def _hl7_timestamp() -> str:
+    return hl7_timestamp()
 
 
-def safe_filename_component(value: str) -> str:
-    """Return a filesystem-safe component (no slashes), suitable for filenames."""
-    v = (value or "").strip()
-    v = v.replace("/", "-").replace("\\", "-")
-    v = SAFE_FILENAME_RE.sub("_", v)
-    v = v[:64]
-    return v or "item"
-
-
-# --- Simple KIS patient registry (per SuS-code) ---
-
-_PATIENTS_LOCK = threading.Lock()
-
-
-_REPORTS_LOCK = threading.Lock()
-
-
-def _patients_file_for_code(code: str) -> str:
-    safe = safe_filename_component(code or "")
-    if not safe or safe == "item":
-        safe = "default"
-    return os.path.join(DATA_DIR, f"patients_{safe}.json")
+def _hl7_msg_control_id(prefix: str = 'MSG') -> str:
+    return hl7_msg_control_id(prefix)
 
 
 def _load_patients(code: str) -> list:
-    _ensure_data_dir()
-    path = _patients_file_for_code(code)
-    with _PATIENTS_LOCK:
-        try:
-            if not os.path.exists(path):
-                return []
-            with open(path, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
-            patients = payload.get('patients', []) if isinstance(payload, dict) else []
-            return patients if isinstance(patients, list) else []
-        except Exception:
-            return []
+    return storage.load_patients(code)
 
 
 def _save_patients(code: str, patients: list) -> None:
-    _ensure_data_dir()
-    path = _patients_file_for_code(code)
-    payload = {
-        'updated_at': datetime.datetime.now().isoformat(timespec='seconds'),
-        'count': len(patients or []),
-        'patients': patients or [],
-    }
-    with _PATIENTS_LOCK:
-        try:
-            tmp = path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, path)
-        except Exception:
-            pass
+    storage.save_patients(code, patients)
 
 
 def _patient_exists(code: str, pid: str) -> bool:
-    pid = (pid or '').strip()
-    if not pid:
-        return False
-    for p in _load_patients(code):
-        if str((p or {}).get('pid') or '') == pid:
-            return True
-    return False
+    return storage.patient_exists(code, pid)
 
 
 def _upsert_patient(code: str, name: str, pid: str) -> None:
-    name = (name or '').strip()
-    pid = (pid or '').strip()
-    if not name or not pid:
-        return
-
-    patients = _load_patients(code)
-    now = datetime.datetime.now().isoformat(timespec='seconds')
-    updated = False
-    for p in patients:
-        if str((p or {}).get('pid') or '') == pid:
-            p['name'] = name
-            p['updated_at'] = now
-            updated = True
-            break
-    if not updated:
-        patients.append({'pid': pid, 'name': name, 'created_at': now})
-
-    patients = patients[-50:]
-    _save_patients(code, patients)
+    storage.upsert_patient(code, name, pid)
 
 
 def _update_patient_last_exam(
@@ -298,174 +96,25 @@ def _update_patient_last_exam(
     description: Optional[str] = None,
     status: Optional[str] = None,
 ) -> None:
-    """Update lightweight exam/order status for a patient (teaching aid).
-
-    Stored in patients_<code>.json under key 'last_exam' to keep things simple.
-    """
-    pid = (pid or '').strip()
-    if not pid:
-        return
-
-    patients = _load_patients(code)
-    now = datetime.datetime.now().isoformat(timespec='seconds')
-    changed = False
-    for p in patients:
-        if str((p or {}).get('pid') or '') != pid:
-            continue
-        ex = (p.get('last_exam') or {}) if isinstance(p, dict) else {}
-        if accession_number:
-            ex['acc'] = accession_number
-        if description:
-            ex['desc'] = description
-        if status:
-            ex['status'] = status
-        ex['updated_at'] = now
-
-        if status == 'Auftrag freigegeben':
-            ex['ordered_at'] = now
-            ex.pop('started_at', None)
-            ex.pop('completed_at', None)
-            ex.pop('reported_at', None)
-        elif status == 'Untersuchung begonnen' and not ex.get('started_at'):
-            ex['started_at'] = now
-        elif status == 'Untersuchung abgeschlossen' and not ex.get('completed_at'):
-            ex['completed_at'] = now
-        elif status == 'Befundet' and not ex.get('reported_at'):
-            ex['reported_at'] = now
-
-        p['last_exam'] = ex
-        p['updated_at'] = now
-        changed = True
-        break
-
-    if changed:
-        _save_patients(code, patients)
-
-
-def _hl7_timestamp() -> str:
-    return datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-
-
-def _hl7_msg_control_id(prefix: str = 'MSG') -> str:
-    return f"{prefix}{random.randint(100000, 999999)}"
-
-
-def _hl7_sanitize_field(text: str) -> str:
-    """Keep HL7 fields single-line and avoid separator characters.
-
-    This is intentionally minimal for demo purposes.
-    """
-    s = '' if text is None else str(text)
-    s = s.replace('\r', ' ').replace('\n', ' ').strip()
-    # Avoid breaking HL7 field structure.
-    s = s.replace('|', '/').replace('~', '-').replace('\\', '/')
-    return s
-
-
-def build_hl7_oru_report(*, pid: str, patient_name: str, study_uid: str, report_text: str) -> str:
-    """Return a simple HL7 v2.x ORU^R01 message (Workstation -> RIS) representing a report."""
-    ts = _hl7_timestamp()
-    msg_id = _hl7_msg_control_id('ORU')
-    pid = (pid or 'UNKNOWN').strip()
-    patient_name = _hl7_sanitize_field(patient_name or '^') or '^'
-    study_uid = _hl7_sanitize_field(study_uid or '')
-    report_text = _hl7_sanitize_field(report_text or '')
-    if not report_text:
-        report_text = 'Kein Text.'
-
-    return (
-        f"MSH|^~\\&|WORKSTATION|RAD|RIS|RADIO|{ts}||ORU^R01|{msg_id}|P|2.3\r"
-        f"PID|1||{pid}||{patient_name}\r"
-        f"OBR|1|||RPT^Radiology Report\r"
-        f"OBX|1|TX|RPT||{report_text}|||||F\r"
-        f"OBX|2|ST|STUDYUID||{study_uid}|||||F"
+    storage.update_patient_last_exam(
+        code,
+        pid,
+        accession_number=accession_number,
+        description=description,
+        status=status,
     )
-
-
-def _reports_file_for_code(code: str) -> str:
-    safe = safe_filename_component(code or "")
-    if not safe or safe == "item":
-        safe = "default"
-    return os.path.join(DATA_DIR, f"reports_{safe}.json")
 
 
 def _load_reports(code: str) -> list:
-    _ensure_data_dir()
-    path = _reports_file_for_code(code)
-    with _REPORTS_LOCK:
-        try:
-            if not os.path.exists(path):
-                return []
-            with open(path, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
-            reports = payload.get('reports', []) if isinstance(payload, dict) else []
-            return reports if isinstance(reports, list) else []
-        except Exception:
-            return []
+    return storage.load_reports(code)
 
 
 def _save_reports(code: str, reports: list) -> None:
-    _ensure_data_dir()
-    path = _reports_file_for_code(code)
-    payload = {
-        'updated_at': datetime.datetime.now().isoformat(timespec='seconds'),
-        'count': len(reports or []),
-        'reports': reports or [],
-    }
-    with _REPORTS_LOCK:
-        try:
-            tmp = path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, path)
-        except Exception:
-            pass
+    storage.save_reports(code, reports)
 
 
 def _reports_index_by_pid(code: str) -> dict:
-    """Return a mapping pid -> {count, last_at} for quick RIS status display on dashboard."""
-    out: dict[str, dict] = {}
-    if not code:
-        return out
-    for r in _load_reports(code):
-        rr = r or {}
-        pid = str(rr.get('PatientID') or '').strip()
-        if not pid:
-            continue
-        created_at = str(rr.get('created_at') or '').strip()
-        cur = out.get(pid) or {'count': 0, 'last_at': ''}
-        cur['count'] = int(cur.get('count') or 0) + 1
-        if created_at and (not cur.get('last_at') or created_at > str(cur.get('last_at'))):
-            cur['last_at'] = created_at
-        out[pid] = cur
-    return out
-
-
-def build_hl7_adt_a04(pid: str, name: str) -> str:
-    """Return a simple HL7 v2.x ADT^A04 registration message as raw segments."""
-    ts = _hl7_timestamp()
-    msg_id = _hl7_msg_control_id('ADT')
-    pid = (pid or 'UNKNOWN').strip()
-    name = (name or '').strip() or '^'
-    return (
-        f"MSH|^~\\&|KIS|HOSP|RIS|RADIO|{ts}||ADT^A04|{msg_id}|P|2.3\r"
-        f"EVN|A04|{ts}\r"
-        f"PID|1||{pid}||{name}\r"
-        f"PV1|1|O\r"
-    )
-
-
-def build_hl7_qry_q02(pid: str) -> str:
-    """Return a simple HL7 v2.x QRY^Q02 message (RIS->LIS lab query)."""
-    ts = _hl7_timestamp()
-    msg_id = _hl7_msg_control_id('QRY')
-    pid = (pid or 'UNKNOWN').strip()
-    return (
-        f"MSH|^~\\&|RIS|RADIO|LIS|LAB|{ts}||QRY^Q02|{msg_id}|P|2.3\r"
-        f"PID|1||{pid}||^\r"
-        f"QRD|{ts}|R|I|{msg_id}|||1^RD|{pid}|RES\r"
-        f"QRF|MON|||||RCT^Creatinine\r"
-    )
+    return storage.reports_index_by_pid(code)
 
 
 def _viewer_moved_studies() -> set[str]:
@@ -492,50 +141,11 @@ def _viewer_mark_study_moved(study_uid: str) -> None:
 
 
 def _received_images_for_code(code: str) -> list[dict]:
-    if code:
-        return [
-            r for r in RECEIVED_IMAGES
-            if str((r or {}).get('PatientID', '')).startswith(code + "-")
-        ]
-    return list(RECEIVED_IMAGES)
+    return dicom_receiver.received_images_for_code(code)
 
 
 def _received_study_groups(received: list[dict]) -> list[dict]:
-    groups: dict[str, dict] = {}
-    for img in received or []:
-        row = img or {}
-        uid = str(row.get('StudyInstanceUID') or 'Unknown').strip() or 'Unknown'
-        g = groups.get(uid)
-        if not g:
-            g = {
-                'StudyInstanceUID': uid,
-                'PatientName': str(row.get('PatientName') or ''),
-                'PatientID': str(row.get('PatientID') or ''),
-                'Modalities': set(),
-                'Count': 0,
-                'LastTimestamp': str(row.get('Timestamp') or ''),
-            }
-            groups[uid] = g
-        g['Count'] += 1
-        mod = str(row.get('Modality') or '').strip()
-        if mod:
-            g['Modalities'].add(mod)
-        ts = str(row.get('Timestamp') or '').strip()
-        if ts:
-            g['LastTimestamp'] = ts
-
-    out = []
-    for uid, g in groups.items():
-        out.append({
-            'StudyInstanceUID': uid,
-            'PatientName': g.get('PatientName', ''),
-            'PatientID': g.get('PatientID', ''),
-            'Modalities': ','.join(sorted(g.get('Modalities') or [])),
-            'Count': g.get('Count', 0),
-            'LastTimestamp': g.get('LastTimestamp', ''),
-        })
-    out.sort(key=lambda x: (x.get('PatientName') or '', x.get('StudyInstanceUID') or ''))
-    return out
+    return dicom_receiver.received_study_groups(received)
 
 
 @app.context_processor
@@ -645,7 +255,7 @@ def admin_home():
         return render_template('admin.html', admin_enabled=False, is_admin=False, msg="Admin ist nicht aktiviert (ADMIN_PASSHASH fehlt).")
     if not _is_admin():
         return render_template('admin.html', admin_enabled=True, is_admin=False)
-    codes = _load_session_codes()
+    codes = storage.load_session_codes()
     return render_template('admin.html', admin_enabled=True, is_admin=True, codes=codes)
 
 
@@ -656,24 +266,7 @@ def admin_login():
     username = (request.form.get('username') or '').strip()
     provided = (request.form.get('password') or '').strip()
 
-    expected_user = _admin_user()
-    if not username or not hmac.compare_digest(username, expected_user):
-        return render_template('admin.html', admin_enabled=True, is_admin=False, msg="❌ Falscher Benutzername oder Passwort.")
-
-    expected_hash = _admin_passhash()
-    if expected_hash:
-        try:
-            ok = bcrypt.checkpw(provided.encode('utf-8'), expected_hash.encode('utf-8'))
-        except Exception:
-            ok = False
-        if ok:
-            session['is_admin'] = True
-            return redirect(url_for('admin_home'))
-        return render_template('admin.html', admin_enabled=True, is_admin=False, msg="❌ Falscher Benutzername oder Passwort.")
-
-    # Legacy plaintext fallback
-    expected_plain = _admin_password()
-    if expected_plain and hmac.compare_digest(provided, expected_plain):
+    if admin_auth.check_login(username, provided):
         session['is_admin'] = True
         return redirect(url_for('admin_home'))
 
@@ -698,8 +291,8 @@ def admin_generate_sessions():
     except Exception:
         n = 20
 
-    codes = _generate_session_codes(n)
-    _save_session_codes(codes)
+    codes = storage.generate_session_codes(n)
+    storage.save_session_codes(codes)
     return redirect(url_for('admin_home'))
 
 
@@ -767,157 +360,37 @@ def query_lis():
         'raw_hl7': raw_oru,
     })
 
-# --- DICOM Receiver (Store SCP) for the Workstation ---
-# This runs in a background thread to receive images from Orthanc (C-MOVE)
-STORE_SCP_PORT = 11112
-RECEIVED_IMAGES = []
-
-def handle_store(event):
-    ds = event.dataset
-    ds.file_meta = event.file_meta
-    
-    # Minimal validation
-    patient_name = str(ds.PatientName) if 'PatientName' in ds else "Unknown"
-    patient_id = str(ds.PatientID) if 'PatientID' in ds else ""
-        
-    RECEIVED_IMAGES.append({
-        'PatientName': patient_name,
-        'PatientID': patient_id,
-        'StudyInstanceUID': str(ds.StudyInstanceUID) if 'StudyInstanceUID' in ds else 'Unknown',
-        'Modality': str(ds.Modality) if 'Modality' in ds else 'OT',
-        'Timestamp': datetime.datetime.now().strftime('%H:%M:%S')
-    })
-    
-    # Return success status (0x0000)
-    return 0x0000
-
-def start_store_scp():
-    ae = AE(ae_title=b'SIMULATOR')
-    # Add supported presentation contexts for Storage
-    ae.add_supported_context(sop_class.CTImageStorage)
-    ae.add_supported_context(sop_class.MRImageStorage)
-    ae.add_supported_context(sop_class.SecondaryCaptureImageStorage)
-    ae.add_supported_context(sop_class.Verification)
-    
-    # Start listening
-    print(f"Starting DICOM Store SCP on port {STORE_SCP_PORT}...")
-    ae.start_server(('', STORE_SCP_PORT), evt_handlers=[(evt.EVT_C_STORE, handle_store)]) # Blocking call is fine in thread? No use block=False to avoid issues if needed
-
-
-_scp_thread_started = False
-
-
-def ensure_store_scp_thread_started():
-    global _scp_thread_started
-    if _scp_thread_started:
-        return
-    scp_thread = threading.Thread(target=start_store_scp, daemon=True)
-    scp_thread.start()
-    _scp_thread_started = True
-
-# -----------------------------------------------------
-
-WORKLIST_DIR = '/app/worklists'
-ORTHANC_HOST = os.environ.get('ORTHANC_DICOM_HOST', 'orthanc')
-ORTHANC_PORT = int(os.environ.get('ORTHANC_DICOM_PORT', 4242))
-ORTHANC_HTTP_URL = (
-    os.environ.get('ORTHANC_URL')
-    or os.environ.get('ORTHANC_url')
-    or 'http://orthanc:8042'
-).rstrip('/')
+# --- DICOM Receiver (Store SCP) ---
+# Runs in a background thread to receive images from Orthanc (C-MOVE).
+# Implemented in simlib.dicom_receiver.
 
 
 def _orthanc_get_json(path: str, *, params: Optional[dict] = None):
-    url = f"{ORTHANC_HTTP_URL}{path}"
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    return r.json()
+    return orthanc_rest.orthanc_get_json(path, params=params)
 
 
 def _orthanc_get_bytes(path: str, *, params: Optional[dict] = None) -> bytes:
-    url = f"{ORTHANC_HTTP_URL}{path}"
-    r = requests.get(url, params=params, timeout=20)
-    r.raise_for_status()
-    return r.content
+    return orthanc_rest.orthanc_get_bytes(path, params=params)
 
 
 def _orthanc_post_json(path: str, payload: dict):
-    url = f"{ORTHANC_HTTP_URL}{path}"
-    r = requests.post(url, json=payload, timeout=15)
-    r.raise_for_status()
-    return r.json()
+    return orthanc_rest.orthanc_post_json(path, payload)
 
 
 def _orthanc_post_dicom_instance(dicom_bytes: bytes) -> dict:
-    """Upload a DICOM file to Orthanc via REST API and return Orthanc's JSON response."""
-    url = f"{ORTHANC_HTTP_URL}/instances"
-    r = requests.post(
-        url,
-        data=dicom_bytes,
-        headers={"Content-Type": "application/dicom"},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-_DICOM_TAG_RE = re.compile(r"\(?\s*([0-9a-fA-F]{4})\s*,\s*([0-9a-fA-F]{4})\s*\)?")
-_DICOM_TAG_HEX8_RE = re.compile(r"^\s*([0-9a-fA-F]{8})\s*$")
+    return orthanc_rest.orthanc_post_dicom_instance(dicom_bytes)
 
 
 def _parse_dicom_tag(tag_text: str, keyword_text: str) -> Optional[Tag]:
-    tag_text = (tag_text or '').strip()
-    keyword_text = (keyword_text or '').strip()
-
-    if keyword_text and not tag_text:
-        t = tag_for_keyword(keyword_text)
-        if t is None:
-            return None
-        return Tag(t)
-
-    if not tag_text:
-        return None
-
-    m = _DICOM_TAG_RE.search(tag_text)
-    if m:
-        return Tag(int(m.group(1), 16), int(m.group(2), 16))
-
-    m2 = _DICOM_TAG_HEX8_RE.match(tag_text)
-    if m2:
-        raw = m2.group(1)
-        return Tag(int(raw[:4], 16), int(raw[4:], 16))
-
-    return None
+    return dicom_utils.parse_dicom_tag(tag_text, keyword_text)
 
 
 def _value_for_vr(vr: str, raw_value: str):
-    """Best-effort conversion: supports multi-value with backslash separators."""
-    vr = (vr or '').strip().upper()
-    raw_value = '' if raw_value is None else str(raw_value)
-
-    if vr == 'SQ':
-        raise ValueError('SQ (Sequence) wird im Editor nicht unterstützt.')
-
-    if '\\' in raw_value:
-        parts = [p for p in raw_value.split('\\')]
-        return parts
-    return raw_value
+    return dicom_utils.value_for_vr(vr, raw_value)
 
 
 def _ensure_new_sop_instance_uid(ds: pydicom.dataset.Dataset) -> None:
-    """Avoid Orthanc duplicate-instance behavior by generating a new SOPInstanceUID."""
-    new_uid = generate_uid()
-    try:
-        ds.SOPInstanceUID = new_uid
-    except Exception:
-        pass
-
-    try:
-        if getattr(ds, 'file_meta', None) is not None:
-            if hasattr(ds.file_meta, 'MediaStorageSOPInstanceUID'):
-                ds.file_meta.MediaStorageSOPInstanceUID = new_uid
-    except Exception:
-        pass
+    dicom_utils.ensure_new_sop_instance_uid(ds)
 
 
 def _study_visible_for_student(study_obj: dict, student_code: str) -> bool:
@@ -933,45 +406,7 @@ def _study_visible_for_student(study_obj: dict, student_code: str) -> bool:
 
 
 def _render_dicom_png(dicom_bytes: bytes) -> bytes:
-    # Minimal, best-effort PNG renderer for teaching demos.
-    # Works well for uncompressed single-frame images; compressed/unsupported
-    # transfer syntaxes will raise and be handled by the caller.
-    import numpy as np
-    from PIL import Image
-
-    ds = pydicom.dcmread(BytesIO(dicom_bytes), force=True)
-    arr = ds.pixel_array  # requires numpy and pixel data handlers
-
-    if arr is None:
-        raise ValueError("Keine Pixel-Daten")
-
-    # Multi-frame: take first frame
-    if hasattr(arr, "ndim") and arr.ndim == 3 and arr.shape[0] not in (3, 4):
-        # Likely frames x rows x cols
-        arr = arr[0]
-
-    # Grayscale 2D
-    if arr.ndim == 2:
-        a = arr.astype(np.float32)
-        mn = float(np.min(a))
-        mx = float(np.max(a))
-        if mx <= mn:
-            a8 = np.zeros_like(a, dtype=np.uint8)
-        else:
-            a8 = ((a - mn) * (255.0 / (mx - mn))).clip(0, 255).astype(np.uint8)
-        img = Image.fromarray(a8, mode="L")
-    # Color image
-    elif arr.ndim == 3 and arr.shape[-1] in (3, 4):
-        a8 = arr
-        if a8.dtype != np.uint8:
-            a8 = a8.astype(np.uint8)
-        img = Image.fromarray(a8)
-    else:
-        raise ValueError(f"Unsupported pixel array shape: {getattr(arr, 'shape', None)}")
-
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
+    return dicom_utils.render_dicom_png(dicom_bytes)
 
 
 def _dicom_tags_for_table(dicom_bytes: bytes) -> list:
@@ -2349,17 +1784,9 @@ def retrieve():
 if __name__ == '__main__':
     # Flask debug reloader runs the module twice. Only start the DICOM listener once.
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('FLASK_ENV') != 'development':
-        ensure_store_scp_thread_started()
+        dicom_receiver.ensure_store_scp_thread_started()
 
-    # Add dummy data to received images for testing/demo
-    if not RECEIVED_IMAGES:
-         RECEIVED_IMAGES.append({
-             'PatientName': 'TEST^DEMO',
-             'PatientID': 'DEMO-0001',
-             'StudyInstanceUID': '1.2.826.0.1.3680043.10.999.1',
-             'Modality': 'CT',
-             'Timestamp': '00:00:00',
-         })
+    dicom_receiver.seed_demo_received_images()
 
     if not os.path.exists(WORKLIST_DIR):
         os.makedirs(WORKLIST_DIR)
