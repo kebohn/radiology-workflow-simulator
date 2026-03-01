@@ -48,7 +48,7 @@ Das Diagramm zeigt, wie **administrative Daten** (Patient wird aufgenommen), **k
 #### 2) HL7 ORU: RIS ↔ LIS (Kreatinin prüfen)
 - **Was passiert fachlich?** Vor einer CT mit Kontrastmittel muss die **Nierenfunktion** geprüft werden.
 - **Was passiert technisch?** Das RIS fragt den Kreatininwert im **LIS** ab bzw. erhält einen Befund als **HL7 ORU** (Observation Result).
-- **Wie wird das im Simulator veranschaulicht?** Im Dashboard kann man über **„🧪 LIS Abfragen (Kreatinin)“** einen (simulierten) ORU-Befund anzeigen lassen.
+- **Wie wird das im Simulator veranschaulicht?** Im Dashboard erfasst man zuerst einen Patienten im **KIS** (ADT). Danach kann man über **„RIS → LIS: Kreatinin anfordern“** die Anfrage/Antwort (inkl. ORU-Befund) als Roh-HL7 sehen.
 - **Was sollen SuS verstehen?** Medizinische Entscheidungen (Kontrastmittel ja/nein) hängen oft von Daten aus *anderen* Systemen (Labor) ab.
 
 #### 3) HL7 ORM: RIS → Worklist-Server (MWL) (Auftrag freigeben)

@@ -215,6 +215,9 @@ def safe_filename_component(value: str) -> str:
 _PATIENTS_LOCK = threading.Lock()
 
 
+_REPORTS_LOCK = threading.Lock()
+
+
 def _patients_file_for_code(code: str) -> str:
     safe = safe_filename_component(code or "")
     if not safe or safe == "item":
@@ -295,6 +298,97 @@ def _hl7_msg_control_id(prefix: str = 'MSG') -> str:
     return f"{prefix}{random.randint(100000, 999999)}"
 
 
+def _hl7_sanitize_field(text: str) -> str:
+    """Keep HL7 fields single-line and avoid separator characters.
+
+    This is intentionally minimal for demo purposes.
+    """
+    s = '' if text is None else str(text)
+    s = s.replace('\r', ' ').replace('\n', ' ').strip()
+    # Avoid breaking HL7 field structure.
+    s = s.replace('|', '/').replace('~', '-').replace('\\', '/')
+    return s
+
+
+def build_hl7_oru_report(*, pid: str, patient_name: str, study_uid: str, report_text: str) -> str:
+    """Return a simple HL7 v2.x ORU^R01 message (Workstation -> RIS) representing a report."""
+    ts = _hl7_timestamp()
+    msg_id = _hl7_msg_control_id('ORU')
+    pid = (pid or 'UNKNOWN').strip()
+    patient_name = _hl7_sanitize_field(patient_name or '^') or '^'
+    study_uid = _hl7_sanitize_field(study_uid or '')
+    report_text = _hl7_sanitize_field(report_text or '')
+    if not report_text:
+        report_text = 'Kein Text.'
+
+    return (
+        f"MSH|^~\\&|WORKSTATION|RAD|RIS|RADIO|{ts}||ORU^R01|{msg_id}|P|2.3\r"
+        f"PID|1||{pid}||{patient_name}\r"
+        f"OBR|1|||RPT^Radiology Report\r"
+        f"OBX|1|TX|RPT||{report_text}|||||F\r"
+        f"OBX|2|ST|STUDYUID||{study_uid}|||||F"
+    )
+
+
+def _reports_file_for_code(code: str) -> str:
+    safe = safe_filename_component(code or "")
+    if not safe or safe == "item":
+        safe = "default"
+    return os.path.join(DATA_DIR, f"reports_{safe}.json")
+
+
+def _load_reports(code: str) -> list:
+    _ensure_data_dir()
+    path = _reports_file_for_code(code)
+    with _REPORTS_LOCK:
+        try:
+            if not os.path.exists(path):
+                return []
+            with open(path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+            reports = payload.get('reports', []) if isinstance(payload, dict) else []
+            return reports if isinstance(reports, list) else []
+        except Exception:
+            return []
+
+
+def _save_reports(code: str, reports: list) -> None:
+    _ensure_data_dir()
+    path = _reports_file_for_code(code)
+    payload = {
+        'updated_at': datetime.datetime.now().isoformat(timespec='seconds'),
+        'count': len(reports or []),
+        'reports': reports or [],
+    }
+    with _REPORTS_LOCK:
+        try:
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
+
+def _reports_index_by_pid(code: str) -> dict:
+    """Return a mapping pid -> {count, last_at} for quick RIS status display on dashboard."""
+    out: dict[str, dict] = {}
+    if not code:
+        return out
+    for r in _load_reports(code):
+        rr = r or {}
+        pid = str(rr.get('PatientID') or '').strip()
+        if not pid:
+            continue
+        created_at = str(rr.get('created_at') or '').strip()
+        cur = out.get(pid) or {'count': 0, 'last_at': ''}
+        cur['count'] = int(cur.get('count') or 0) + 1
+        if created_at and (not cur.get('last_at') or created_at > str(cur.get('last_at'))):
+            cur['last_at'] = created_at
+        out[pid] = cur
+    return out
+
+
 def build_hl7_adt_a04(pid: str, name: str) -> str:
     """Return a simple HL7 v2.x ADT^A04 registration message as raw segments."""
     ts = _hl7_timestamp()
@@ -320,6 +414,76 @@ def build_hl7_qry_q02(pid: str) -> str:
         f"QRD|{ts}|R|I|{msg_id}|||1^RD|{pid}|RES\r"
         f"QRF|MON|||||RCT^Creatinine\r"
     )
+
+
+def _viewer_moved_studies() -> set[str]:
+    """Return StudyInstanceUIDs for which this session has triggered a C-MOVE."""
+    raw = session.get('viewer_moved_studies')
+    if not isinstance(raw, list):
+        return set()
+    out: set[str] = set()
+    for x in raw:
+        if isinstance(x, str) and x.strip():
+            out.add(x.strip())
+    return out
+
+
+def _viewer_mark_study_moved(study_uid: str) -> None:
+    uid = (study_uid or '').strip()
+    if not uid:
+        return
+    moved = _viewer_moved_studies()
+    moved.add(uid)
+    # Keep the list bounded.
+    session['viewer_moved_studies'] = list(sorted(moved))[-50:]
+    session.modified = True
+
+
+def _received_images_for_code(code: str) -> list[dict]:
+    if code:
+        return [
+            r for r in RECEIVED_IMAGES
+            if str((r or {}).get('PatientID', '')).startswith(code + "-")
+        ]
+    return list(RECEIVED_IMAGES)
+
+
+def _received_study_groups(received: list[dict]) -> list[dict]:
+    groups: dict[str, dict] = {}
+    for img in received or []:
+        row = img or {}
+        uid = str(row.get('StudyInstanceUID') or 'Unknown').strip() or 'Unknown'
+        g = groups.get(uid)
+        if not g:
+            g = {
+                'StudyInstanceUID': uid,
+                'PatientName': str(row.get('PatientName') or ''),
+                'PatientID': str(row.get('PatientID') or ''),
+                'Modalities': set(),
+                'Count': 0,
+                'LastTimestamp': str(row.get('Timestamp') or ''),
+            }
+            groups[uid] = g
+        g['Count'] += 1
+        mod = str(row.get('Modality') or '').strip()
+        if mod:
+            g['Modalities'].add(mod)
+        ts = str(row.get('Timestamp') or '').strip()
+        if ts:
+            g['LastTimestamp'] = ts
+
+    out = []
+    for uid, g in groups.items():
+        out.append({
+            'StudyInstanceUID': uid,
+            'PatientName': g.get('PatientName', ''),
+            'PatientID': g.get('PatientID', ''),
+            'Modalities': ','.join(sorted(g.get('Modalities') or [])),
+            'Count': g.get('Count', 0),
+            'LastTimestamp': g.get('LastTimestamp', ''),
+        })
+    out.sort(key=lambda x: (x.get('PatientName') or '', x.get('StudyInstanceUID') or ''))
+    return out
 
 
 @app.context_processor
@@ -1129,16 +1293,19 @@ def index():
     return render_template(
         'index.html',
         patients=patients,
+        ris_reports_by_pid=_reports_index_by_pid(code),
+        ris_reports=_load_reports(code) if code else [],
         last_adt_hl7=session.get('last_adt_hl7', ''),
         last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
         last_oru_hl7=session.get('last_oru_hl7', ''),
         last_lis_summary=session.get('last_lis_summary', None),
-        workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-        workflow_next="RIS: Kreatinin anfordern (HL7) → LIS",
+        workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+        workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
     )
 
 @app.route('/echo', methods=['POST'])
 def echo():
+    code = get_student_code()
     try:
         from pynetdicom import AE, sop_class
         ae = AE(ae_title=b'SIMULATOR')
@@ -1149,23 +1316,44 @@ def echo():
             assoc.release()
             return render_template(
                 'index.html',
+                patients=_load_patients(code),
+                ris_reports_by_pid=_reports_index_by_pid(code),
+                ris_reports=_load_reports(code) if code else [],
                 msg=f"✅ DICOM C-ECHO erfolgreich! Das PACS ist unter {ORTHANC_HOST}:{ORTHANC_PORT} erreichbar.",
-                workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-                workflow_next="LIS: Kreatinin prüfen (HL7 ORU)",
+                last_adt_hl7=session.get('last_adt_hl7', ''),
+                last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
+                last_oru_hl7=session.get('last_oru_hl7', ''),
+                last_lis_summary=session.get('last_lis_summary', None),
+                workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+                workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
             )
         else:
             return render_template(
                 'index.html',
+                patients=_load_patients(code),
+                ris_reports_by_pid=_reports_index_by_pid(code),
+                ris_reports=_load_reports(code) if code else [],
                 msg="❌ DICOM Association gescheitert. Ist der Orthanc-Container gestartet?",
-                workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-                workflow_next="LIS: Kreatinin prüfen (HL7 ORU)",
+                last_adt_hl7=session.get('last_adt_hl7', ''),
+                last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
+                last_oru_hl7=session.get('last_oru_hl7', ''),
+                last_lis_summary=session.get('last_lis_summary', None),
+                workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+                workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
             )
     except Exception as e:
         return render_template(
             'index.html',
+            patients=_load_patients(code),
+            ris_reports_by_pid=_reports_index_by_pid(code),
+            ris_reports=_load_reports(code) if code else [],
             msg=f"❌ Fehler bei C-ECHO: {str(e)}",
-            workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-            workflow_next="LIS: Kreatinin prüfen (HL7 ORU)",
+            last_adt_hl7=session.get('last_adt_hl7', ''),
+            last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
+            last_oru_hl7=session.get('last_oru_hl7', ''),
+            last_lis_summary=session.get('last_lis_summary', None),
+            workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+            workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
         )
 
 
@@ -1179,13 +1367,15 @@ def kis_register_patient():
         return render_template(
             'index.html',
             patients=_load_patients(code),
+            ris_reports_by_pid=_reports_index_by_pid(code),
+            ris_reports=_load_reports(code) if code else [],
             msg="❌ Bitte Patientenname und PID angeben.",
             last_adt_hl7=session.get('last_adt_hl7', ''),
             last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
             last_oru_hl7=session.get('last_oru_hl7', ''),
             last_lis_summary=session.get('last_lis_summary', None),
-            workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-            workflow_next="RIS: Kreatinin anfordern (HL7) → LIS",
+            workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+            workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
         )
 
     pid = prefix_for_student(pid_raw) or 'UNKNOWN'
@@ -1199,12 +1389,14 @@ def kis_register_patient():
         'index.html',
         msg=f"✅ Patient erfasst: {name} (PID: {pid}).",
         patients=_load_patients(code),
+        ris_reports_by_pid=_reports_index_by_pid(code),
+        ris_reports=_load_reports(code) if code else [],
         last_adt_hl7=raw_hl7,
         last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
         last_oru_hl7=session.get('last_oru_hl7', ''),
         last_lis_summary=session.get('last_lis_summary', None),
-        workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-        workflow_next="RIS: Kreatinin anfordern (HL7) → LIS",
+        workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+        workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
     )
 
 @app.route('/create_order', methods=['POST'])
@@ -1220,12 +1412,14 @@ def create_order():
             'index.html',
             msg=f"❌ Unbekannte PID: {pid}. Bitte Patient zuerst im KIS erfassen.",
             patients=_load_patients(code),
+            ris_reports_by_pid=_reports_index_by_pid(code),
+            ris_reports=_load_reports(code) if code else [],
             last_adt_hl7=session.get('last_adt_hl7', ''),
             last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
             last_oru_hl7=session.get('last_oru_hl7', ''),
             last_lis_summary=session.get('last_lis_summary', None),
-            workflow_current="KIS: Patient aufnehmen (HL7 ADT)",
-            workflow_next="RIS: Kreatinin anfordern (HL7) → LIS",
+            workflow_current="1. HL7 ADT: KIS → RIS (Patient aufnehmen)",
+            workflow_next="2. HL7 ORU: RIS ↔ LIS (Kreatinin)",
         )
     
     create_dicom_worklist_file(name, pid, acc, desc)
@@ -1235,18 +1429,25 @@ def create_order():
         'index.html',
         msg=msg,
         patients=_load_patients(code),
+        ris_reports_by_pid=_reports_index_by_pid(code),
+        ris_reports=_load_reports(code) if code else [],
         last_adt_hl7=session.get('last_adt_hl7', ''),
         last_lis_request_hl7=session.get('last_lis_request_hl7', ''),
         last_oru_hl7=session.get('last_oru_hl7', ''),
         last_lis_summary=session.get('last_lis_summary', None),
-        workflow_current="RIS: Auftrag freigeben (HL7 ORM)",
-        workflow_next="MWL: Worklist abrufen (DICOM C-FIND)",
+        workflow_current="3. HL7 ORM: RIS (Auftrag freigeben)",
+        workflow_next="4. DICOM C-FIND (MWL): Worklist abrufen",
     )
 
 @app.route('/modality')
 def modality():
     items = perform_c_find_mwl()
-    return render_template('modality.html', items=items, workflow_current="Worklist abrufen (DICOM C-FIND)", workflow_next="Bilder senden (DICOM C-STORE)")
+    return render_template(
+        'modality.html',
+        items=items,
+        workflow_current="4. DICOM C-FIND (MWL): Worklist abrufen",
+        workflow_next="5. DICOM C-STORE: Bilder senden → PACS",
+    )
 
 @app.route('/scan', methods=['POST'])
 def scan():
@@ -1286,7 +1487,13 @@ def scan():
         msg = f"☢️ Dummy-Scan für {name}. (Hinweis: Für echte Daten bitte DICOM-Dateien hochladen.) Status: {status}."
 
     items = perform_c_find_mwl()
-    return render_template('modality.html', items=items, msg=msg, workflow_current="Bilder senden (DICOM C-STORE)", workflow_next="Studien suchen (DICOM C-FIND)")
+    return render_template(
+        'modality.html',
+        items=items,
+        msg=msg,
+        workflow_current="5. DICOM C-STORE: Bilder senden → PACS",
+        workflow_next="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+    )
 
 
 @app.route('/pacs')
@@ -1296,7 +1503,13 @@ def pacs_home():
     try:
         studies = _orthanc_get_json('/studies', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs.html', studies=[], msg=f"❌ Orthanc nicht erreichbar: {e}")
+        return render_template(
+            'pacs.html',
+            studies=[],
+            msg=f"❌ Orthanc nicht erreichbar: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     visible = [s for s in (studies or []) if _study_visible_for_student(s, code)]
     if accession_filter:
@@ -1310,16 +1523,29 @@ def pacs_home():
         return (tags.get('StudyDate') or '', tags.get('StudyTime') or '')
     visible.sort(key=_sort_key, reverse=True)
 
-    return render_template('pacs.html', studies=visible, acc=accession_filter)
+    return render_template(
+        'pacs.html',
+        studies=visible,
+        acc=accession_filter,
+        workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+        workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+    )
 
 
 @app.route('/pacs/studies/<study_id>')
 def pacs_study(study_id: str):
     code = get_student_code()
+    msg = (request.args.get('msg') or '').strip() or None
     try:
         study = _orthanc_get_json(f'/studies/{study_id}', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs_study.html', study=None, msg=f"❌ Fehler beim Laden der Studie: {e}")
+        return render_template(
+            'pacs_study.html',
+            study=None,
+            msg=f"❌ Fehler beim Laden der Studie: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studie anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     if not _study_visible_for_student(study, code):
         abort(404)
@@ -1332,25 +1558,57 @@ def pacs_study(study_id: str):
         except Exception:
             continue
 
-    return render_template('pacs_study.html', study=study, series=series)
+    return render_template(
+        'pacs_study.html',
+        study=study,
+        series=series,
+        msg=msg,
+        workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studie anzeigen)",
+        workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+    )
 
 
 @app.route('/pacs/series/<series_id>')
 def pacs_series(series_id: str):
     code = get_student_code()
+    msg = (request.args.get('msg') or '').strip() or None
     try:
         series = _orthanc_get_json(f'/series/{series_id}', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs_series.html', study=None, series=None, instances=[], msg=f"❌ Fehler beim Laden der Serie: {e}")
+        return render_template(
+            'pacs_series.html',
+            study=None,
+            series=None,
+            instances=[],
+            msg=f"❌ Fehler beim Laden der Serie: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Serie anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     parent_study_id = str(series.get('ParentStudy') or '')
     if not parent_study_id:
-        return render_template('pacs_series.html', study=None, series=series, instances=[], msg="❌ ParentStudy fehlt.")
+        return render_template(
+            'pacs_series.html',
+            study=None,
+            series=series,
+            instances=[],
+            msg="❌ ParentStudy fehlt.",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Serie anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     try:
         study = _orthanc_get_json(f'/studies/{parent_study_id}', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs_series.html', study=None, series=series, instances=[], msg=f"❌ Fehler beim Laden der Studie: {e}")
+        return render_template(
+            'pacs_series.html',
+            study=None,
+            series=series,
+            instances=[],
+            msg=f"❌ Fehler beim Laden der Studie: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Serie anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     if not _study_visible_for_student(study, code):
         abort(404)
@@ -1363,7 +1621,117 @@ def pacs_series(series_id: str):
         except Exception:
             instances.append({'ID': iid, 'MainDicomTags': {}})
 
-    return render_template('pacs_series.html', study=study, series=series, instances=instances)
+    return render_template(
+        'pacs_series.html',
+        study=study,
+        series=series,
+        instances=instances,
+        msg=msg,
+        workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Serie anzeigen)",
+        workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+    )
+
+
+@app.route('/pacs/series/<series_id>/derive_seg', methods=['POST'])
+def pacs_series_derive_seg(series_id: str):
+    code = get_student_code()
+
+    try:
+        series = _orthanc_get_json(f'/series/{series_id}', params={'expand': 'true'})
+    except Exception as e:
+        return redirect(url_for('pacs_series', series_id=series_id, msg=f"❌ Serie konnte nicht geladen werden: {e}"))
+
+    parent_study_id = str(series.get('ParentStudy') or '').strip()
+    if not parent_study_id:
+        return redirect(url_for('pacs_series', series_id=series_id, msg="❌ ParentStudy fehlt."))
+
+    try:
+        study = _orthanc_get_json(f'/studies/{parent_study_id}', params={'expand': 'true'})
+    except Exception as e:
+        return redirect(url_for('pacs_series', series_id=series_id, msg=f"❌ Studie konnte nicht geladen werden: {e}"))
+
+    if not _study_visible_for_student(study, code):
+        abort(404)
+
+    instance_ids = [str(x) for x in (series.get('Instances') or [])]
+    if not instance_ids:
+        return redirect(url_for('pacs_series', series_id=series_id, msg="❌ Keine Instanzen in dieser Serie."))
+
+    # Keep the demo reasonably fast.
+    instance_ids = instance_ids[:30]
+
+    new_series_uid = generate_uid()
+    uploaded_instance_ids: list[str] = []
+    new_series_id: Optional[str] = None
+
+    try:
+        for iid in instance_ids:
+            dicom_bytes = _orthanc_get_bytes(f'/instances/{iid}/file')
+            ds = pydicom.dcmread(BytesIO(dicom_bytes), force=True)
+
+            # Simulate a derived "segmentation" series (not a real DICOM-SEG IOD).
+            try:
+                ds.SeriesInstanceUID = new_series_uid
+            except Exception:
+                pass
+            try:
+                ds.SeriesDescription = 'Segmentation (simulated)'
+            except Exception:
+                pass
+            try:
+                ds.ImageType = ['DERIVED', 'SECONDARY']
+            except Exception:
+                pass
+            try:
+                ds.DerivationDescription = 'Simulated derived series (teaching demo)'
+            except Exception:
+                pass
+
+            # Bump series number so it shows up separately in many viewers.
+            try:
+                base = int(getattr(ds, 'SeriesNumber', 0) or 0)
+                ds.SeriesNumber = base + 500
+            except Exception:
+                try:
+                    ds.SeriesNumber = 500
+                except Exception:
+                    pass
+
+            _ensure_new_sop_instance_uid(ds)
+            try:
+                if hasattr(ds, 'file_meta') and ds.file_meta is not None:
+                    try:
+                        ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            buf = BytesIO()
+            pydicom.dcmwrite(buf, ds, write_like_original=False)
+            resp = _orthanc_post_dicom_instance(buf.getvalue())
+            new_instance_id = str(resp.get('ID') or '').strip()
+            if new_instance_id:
+                uploaded_instance_ids.append(new_instance_id)
+
+                if not new_series_id:
+                    try:
+                        inst_meta = _orthanc_get_json(f'/instances/{new_instance_id}')
+                        new_series_id = str(inst_meta.get('ParentSeries') or '').strip() or None
+                    except Exception:
+                        new_series_id = None
+
+        if not uploaded_instance_ids:
+            return redirect(url_for('pacs_series', series_id=series_id, msg="❌ Upload fehlgeschlagen (keine Instanzen erzeugt)."))
+
+        target = new_series_id or series_id
+        return redirect(url_for(
+            'pacs_series',
+            series_id=target,
+            msg=f"✅ Derived Series erzeugt: 'Segmentation (simulated)' ({len(uploaded_instance_ids)} Instanzen).",
+        ))
+    except Exception as e:
+        return redirect(url_for('pacs_series', series_id=series_id, msg=f"❌ Derived Series fehlgeschlagen: {e}"))
 
 
 @app.route('/pacs/instances/<instance_id>')
@@ -1380,24 +1748,68 @@ def pacs_instance(instance_id: str):
     try:
         instance = _orthanc_get_json(f'/instances/{instance_id}')
     except Exception as e:
-        return render_template('pacs_instance.html', study=None, series=None, instance=None, tags=[], instance_ids=[], i=0, msg=f"❌ Fehler beim Laden der Instanz: {e}")
+        return render_template(
+            'pacs_instance.html',
+            study=None,
+            series=None,
+            instance=None,
+            tags=[],
+            instance_ids=[],
+            i=0,
+            msg=f"❌ Fehler beim Laden der Instanz: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Instanz anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     parent_series_id = str(instance.get('ParentSeries') or '')
     if not series_id:
         series_id = parent_series_id
     if not series_id:
-        return render_template('pacs_instance.html', study=None, series=None, instance=instance, tags=[], instance_ids=[], i=0, msg="❌ ParentSeries fehlt.")
+        return render_template(
+            'pacs_instance.html',
+            study=None,
+            series=None,
+            instance=instance,
+            tags=[],
+            instance_ids=[],
+            i=0,
+            msg="❌ ParentSeries fehlt.",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Instanz anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     try:
         series = _orthanc_get_json(f'/series/{series_id}', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs_instance.html', study=None, series=None, instance=instance, tags=[], instance_ids=[], i=0, msg=f"❌ Fehler beim Laden der Serie: {e}")
+        return render_template(
+            'pacs_instance.html',
+            study=None,
+            series=None,
+            instance=instance,
+            tags=[],
+            instance_ids=[],
+            i=0,
+            msg=f"❌ Fehler beim Laden der Serie: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Instanz anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     parent_study_id = str(series.get('ParentStudy') or '')
     try:
         study = _orthanc_get_json(f'/studies/{parent_study_id}', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs_instance.html', study=None, series=series, instance=instance, tags=[], instance_ids=[], i=0, msg=f"❌ Fehler beim Laden der Studie: {e}")
+        return render_template(
+            'pacs_instance.html',
+            study=None,
+            series=series,
+            instance=instance,
+            tags=[],
+            instance_ids=[],
+            i=0,
+            msg=f"❌ Fehler beim Laden der Studie: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Instanz anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     if not _study_visible_for_student(study, code):
         abort(404)
@@ -1415,9 +1827,31 @@ def pacs_instance(instance_id: str):
     except Exception as e:
         tags = []
         msg = f"⚠️ Metadaten konnten nicht gelesen werden: {e}"
-        return render_template('pacs_instance.html', study=study, series=series, instance=instance, tags=tags, instance_ids=instance_ids, i=index, msg=msg)
+        return render_template(
+            'pacs_instance.html',
+            study=study,
+            series=series,
+            instance=instance,
+            tags=tags,
+            instance_ids=instance_ids,
+            i=index,
+            msg=msg,
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Instanz anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
-    return render_template('pacs_instance.html', study=study, series=series, instance=instance, tags=tags, instance_ids=instance_ids, i=index, msg=msg)
+    return render_template(
+        'pacs_instance.html',
+        study=study,
+        series=series,
+        instance=instance,
+        tags=tags,
+        instance_ids=instance_ids,
+        i=index,
+        msg=msg,
+        workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Instanz anzeigen)",
+        workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+    )
 
 
 @app.route('/pacs/open_by_uid')
@@ -1436,7 +1870,13 @@ def pacs_open_by_uid():
             'Limit': 20,
         })
     except Exception as e:
-        return render_template('pacs.html', studies=[], msg=f"❌ Orthanc Suche fehlgeschlagen: {e}")
+        return render_template(
+            'pacs.html',
+            studies=[],
+            msg=f"❌ Orthanc Suche fehlgeschlagen: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     study_ids = []
     if isinstance(result, list):
@@ -1454,7 +1894,13 @@ def pacs_open_by_uid():
         except Exception:
             continue
 
-    return render_template('pacs.html', studies=[], msg="⚠️ Studie nicht gefunden oder nicht sichtbar für diesen SuS-Code.")
+    return render_template(
+        'pacs.html',
+        studies=[],
+        msg="⚠️ Studie nicht gefunden oder nicht sichtbar für diesen SuS-Code.",
+        workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+        workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+    )
 
 
 @app.route('/pacs/open_first_instance_by_uid')
@@ -1474,7 +1920,13 @@ def pacs_open_first_instance_by_uid():
             'Limit': 20,
         })
     except Exception as e:
-        return render_template('pacs.html', studies=[], msg=f"❌ Orthanc Suche fehlgeschlagen: {e}")
+        return render_template(
+            'pacs.html',
+            studies=[],
+            msg=f"❌ Orthanc Suche fehlgeschlagen: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     study_ids = []
     if isinstance(result, list):
@@ -1501,7 +1953,13 @@ def pacs_open_first_instance_by_uid():
         except Exception:
             continue
 
-    return render_template('pacs.html', studies=[], msg="⚠️ Studie nicht gefunden oder nicht sichtbar für diesen SuS-Code.")
+    return render_template(
+        'pacs.html',
+        studies=[],
+        msg="⚠️ Studie nicht gefunden oder nicht sichtbar für diesen SuS-Code.",
+        workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+        workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+    )
 
 
 @app.route('/pacs/studies/<study_id>/viewer')
@@ -1510,14 +1968,27 @@ def pacs_viewer(study_id: str):
     try:
         study = _orthanc_get_json(f'/studies/{study_id}', params={'expand': 'true'})
     except Exception as e:
-        return render_template('pacs.html', studies=[], msg=f"❌ Fehler beim Laden der Studie: {e}")
+        return render_template(
+            'pacs.html',
+            studies=[],
+            msg=f"❌ Fehler beim Laden der Studie: {e}",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studien suchen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     if not _study_visible_for_student(study, code):
         abort(404)
 
     series_list = study.get('Series') or []
     if not series_list:
-        return render_template('pacs_study.html', study=study, series=[], msg="⚠️ Keine Serien in dieser Studie.")
+        return render_template(
+            'pacs_study.html',
+            study=study,
+            series=[],
+            msg="⚠️ Keine Serien in dieser Studie.",
+            workflow_current="6. DICOM C-FIND (Study): Workstation ↔ PACS (Studie anzeigen)",
+            workflow_next="7. DICOM C-MOVE: Retrieve (Workstation)",
+        )
 
     first_series_id = str(series_list[0])
     try:
@@ -1647,15 +2118,108 @@ def _query_studies():
 def viewer():
     studies = _query_studies()
     code = get_student_code()
+    received = _received_images_for_code(code)
+    return render_template(
+        'viewer.html',
+        studies=studies,
+        received=received,
+        received_studies=_received_study_groups(received),
+        moved_studies=_viewer_moved_studies(),
+        reports=_load_reports(code) if code else [],
+        last_workstation_oru_hl7=session.get('last_workstation_oru_hl7'),
+        workflow_current="6. DICOM C-FIND (Study): Studien suchen",
+        workflow_next="7. DICOM C-MOVE: Retrieve anfordern",
+    )
+
+
+@app.route('/workstation/report', methods=['POST'])
+def workstation_report():
+    """Create a radiology report on the Workstation (as HL7 ORU) after images were received."""
+    code = get_student_code()
+    study_uid = (request.form.get('study_uid') or '').strip()
+    report_text = (request.form.get('report_text') or '').strip()
+
+    studies = _query_studies()
+    received = _received_images_for_code(code)
+    received_studies = _received_study_groups(received)
+
+    if not study_uid:
+        return render_template(
+            'viewer.html',
+            msg="❌ Bitte eine Studie auswählen.",
+            studies=studies,
+            received=received,
+            received_studies=received_studies,
+            moved_studies=_viewer_moved_studies(),
+            reports=_load_reports(code) if code else [],
+            last_workstation_oru_hl7=session.get('last_workstation_oru_hl7'),
+            workflow_current="7. DICOM C-MOVE: Retrieve + Empfang",
+            workflow_next="Optional: HL7 ORU^R01 – Befund (Workstation → RIS)",
+        )
+
+    match = None
+    for img in received:
+        if str((img or {}).get('StudyInstanceUID') or '').strip() == study_uid:
+            match = img
+            break
+
+    if not match:
+        return render_template(
+            'viewer.html',
+            msg="❌ Für diese Studie wurden noch keine Bilder empfangen (Cache leer). Erst C-MOVE anfordern und Empfang abwarten.",
+            studies=studies,
+            received=received,
+            received_studies=received_studies,
+            moved_studies=_viewer_moved_studies(),
+            reports=_load_reports(code) if code else [],
+            last_workstation_oru_hl7=session.get('last_workstation_oru_hl7'),
+            workflow_current="7. DICOM C-MOVE: Retrieve + Empfang",
+            workflow_next="Optional: HL7 ORU^R01 – Befund (Workstation → RIS)",
+        )
+
+    pid = str((match or {}).get('PatientID') or '').strip() or 'UNKNOWN'
+    pname = str((match or {}).get('PatientName') or '').strip() or '^'
+
+    raw_oru = build_hl7_oru_report(
+        pid=pid,
+        patient_name=pname,
+        study_uid=study_uid,
+        report_text=report_text,
+    )
+
+    session['last_workstation_oru_hl7'] = raw_oru
+    session.modified = True
+
     if code:
-        received = [r for r in RECEIVED_IMAGES if str(r.get('PatientID', '')).startswith(code + "-")]
-    else:
-        received = RECEIVED_IMAGES
-    return render_template('viewer.html', studies=studies, received=received, workflow_current="Studien suchen (DICOM C-FIND)", workflow_next="Retrieve (DICOM C-MOVE)")
+        reports = _load_reports(code)
+        reports.append({
+            'created_at': datetime.datetime.now().isoformat(timespec='seconds'),
+            'StudyInstanceUID': study_uid,
+            'PatientID': pid,
+            'PatientName': pname,
+            'text': report_text,
+            'hl7': raw_oru,
+        })
+        reports = reports[-50:]
+        _save_reports(code, reports)
+
+    return render_template(
+        'viewer.html',
+        msg="✅ Befund erstellt (HL7 ORU^R01) und an RIS gesendet (simuliert).",
+        studies=studies,
+        received=received,
+        received_studies=received_studies,
+        moved_studies=_viewer_moved_studies(),
+        reports=_load_reports(code) if code else [],
+        last_workstation_oru_hl7=raw_oru,
+        workflow_current="Optional: HL7 ORU^R01 – Befund (Workstation → RIS)",
+        workflow_next="6. DICOM C-FIND: nächste Studie suchen",
+    )
 
 @app.route('/retrieve', methods=['POST'])
 def retrieve():
     study_uid = request.form.get('study_uid')
+    code = get_student_code()
     
     # Trigger C-MOVE
     try:
@@ -1675,13 +2239,42 @@ def retrieve():
                  if status:
                      print(f"C-MOVE Status: 0x{status.Status:04x}")
             assoc.release()
+
+            # Gate: once the user has triggered C-MOVE for this StudyInstanceUID,
+            # allow opening the PACS viewer/metadata links from the Workstation list.
+            _viewer_mark_study_moved(study_uid)
             
         studies = _query_studies()
-        return render_template('viewer.html', msg="C-MOVE Anforderung gesendet! Bitte warten Sie auf eintreffende Bilder...", studies=studies, received=RECEIVED_IMAGES, workflow_current="Retrieve (DICOM C-MOVE)", workflow_next="Bilder empfangen (DICOM C-STORE)")
+        return render_template(
+            'viewer.html',
+            msg=(
+                "✅ C-MOVE (Retrieve) angefordert: Das PACS wird die Instanzen nun aktiv per C-STORE "
+                "an diese Workstation senden. Bitte kurz warten und dann den Cache unten prüfen (ggf. Refresh)."
+            ),
+            studies=studies,
+            received=_received_images_for_code(code),
+            received_studies=_received_study_groups(_received_images_for_code(code)),
+            moved_studies=_viewer_moved_studies(),
+            reports=_load_reports(code) if code else [],
+            last_workstation_oru_hl7=session.get('last_workstation_oru_hl7'),
+            workflow_current="7. DICOM C-MOVE: Retrieve anfordern",
+            workflow_next="PACS → Workstation: Bilder kommen per DICOM C-STORE",
+        )
 
     except Exception as e:
          studies = _query_studies()
-         return render_template('viewer.html', msg=f"Fehler bei C-MOVE: {e}", studies=studies, received=RECEIVED_IMAGES, workflow_current="Retrieve (DICOM C-MOVE)", workflow_next="Bilder empfangen (DICOM C-STORE)")
+         return render_template(
+             'viewer.html',
+             msg=f"❌ Fehler bei C-MOVE (Retrieve): {e}",
+             studies=studies,
+             received=_received_images_for_code(code),
+             received_studies=_received_study_groups(_received_images_for_code(code)),
+             moved_studies=_viewer_moved_studies(),
+             reports=_load_reports(code) if code else [],
+             last_workstation_oru_hl7=session.get('last_workstation_oru_hl7'),
+             workflow_current="7. DICOM C-MOVE: Retrieve anfordern",
+             workflow_next="PACS → Workstation: Bilder kommen per DICOM C-STORE",
+         )
 
 if __name__ == '__main__':
     # Flask debug reloader runs the module twice. Only start the DICOM listener once.
@@ -1690,7 +2283,13 @@ if __name__ == '__main__':
 
     # Add dummy data to received images for testing/demo
     if not RECEIVED_IMAGES:
-         RECEIVED_IMAGES.append({'PatientName': 'TEST^DEMO', 'Study': 'Local Cache', 'Modality':'CT', 'Timestamp': '00:00:00'})
+         RECEIVED_IMAGES.append({
+             'PatientName': 'TEST^DEMO',
+             'PatientID': 'DEMO-0001',
+             'StudyInstanceUID': '1.2.826.0.1.3680043.10.999.1',
+             'Modality': 'CT',
+             'Timestamp': '00:00:00',
+         })
 
     if not os.path.exists(WORKLIST_DIR):
         os.makedirs(WORKLIST_DIR)

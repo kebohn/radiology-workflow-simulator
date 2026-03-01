@@ -356,7 +356,7 @@ flowchart TB
 
 
     <div class="section">
-        <h2>HL7 ORM Nachricht (Order Entry)</h2>
+        <h2>3. HL7 ORM: Auftrag (Order Entry)</h2>
         <p>Der Simulator hat implizit folgende HL7-Nachricht empfangen:</p>
         <pre style="background: #333; color: #0f0; padding: 10px; border-radius: 5px; font-family: monospace; overflow-x: auto;">
 MSH|^~\&|KEL|RIS|CT|MOD|202310101010||ORM^O01|MSG00001|P|2.3
@@ -371,7 +371,7 @@ OBR|1|{{ items[0].AccessionNumber if items else 'ACC001' }}||CT^CT Abdomen|||202
     </div>
     
     <div class="section">
-        <h2>Arbeitsliste (Worklist Query - C-FIND)</h2>
+        <h2>4. DICOM C-FIND (MWL): Arbeitsliste abrufen</h2>
         {% if items %}
         <table>
             <thead>

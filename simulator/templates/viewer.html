@@ -358,44 +358,62 @@ flowchart TB
     {% endif %}
 
     <div class="section">
-        <h2>1. PACS Suche (Query - C-FIND Study Root)</h2>
+        <h2>6. DICOM C-FIND (Study Root): Studien suchen</h2>
         <p>Suche nach allen Studien im PACS (Orthanc).</p>
+
+        <div class="protocol-note" style="margin-top:6px;">
+            ℹ️ <strong>Merke:</strong> <code>C-FIND</code> = Liste holen (Query). <code>C-MOVE</code> = <em>Retrieve anfordern</em> — danach sendet das PACS die Bilder aktiv per <code>C-STORE</code> an diese Workstation.
+        </div>
         
         {% if studies %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Patientenname</th>
-                    <th>Patienten-ID</th>
-                    <th>Studien-Datum</th>
-                    <th>Modalität</th>
-                    <th>Aktion</th>
-                    <th>Viewer</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for study in studies %}
-                <tr>
-                    <td>{{ study.PatientName }}</td>
-                    <td>{{ study.PatientID }}</td>
-                    <td>{{ study.StudyDate }}</td>
-                    <td>{{ study.ModalitiesInStudy }}</td>
-                    <td>
-                        <form action="/retrieve" method="post" style="display:inline;">
-                            <input type="hidden" name="study_uid" value="{{ study.StudyInstanceUID }}">
-                            <button type="submit">LADEN (C-MOVE)</button>
-                        </form>
-                    </td>
-                    <td style="white-space: nowrap;">
-                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                            <a href="/pacs/open_by_uid?study_uid={{ study.StudyInstanceUID }}"><button type="button" style="background:#1565c0;">Öffnen</button></a>
-                            <a href="/pacs/open_first_instance_by_uid?study_uid={{ study.StudyInstanceUID }}"><button type="button" style="background:#455a64;">Metadaten</button></a>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div style="max-height: 55vh; overflow: auto; border: 1px solid #ddd; border-radius: 8px; background: white;">
+            <table style="margin-top:0;">
+                <thead>
+                    <tr>
+                        <th>Patientenname</th>
+                        <th>Patienten-ID</th>
+                        <th>Studien-Datum</th>
+                        <th>Modalität</th>
+                        <th>Aktion</th>
+                        <th>Viewer</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for study in studies %}
+                    {% set can_open = moved_studies and (study.StudyInstanceUID in moved_studies) %}
+                    <tr>
+                        <td>{{ study.PatientName }}</td>
+                        <td>{{ study.PatientID }}</td>
+                        <td>{{ study.StudyDate }}</td>
+                        <td>{{ study.ModalitiesInStudy }}</td>
+                        <td>
+                            <form action="/retrieve" method="post" style="display:inline;">
+                                <input type="hidden" name="study_uid" value="{{ study.StudyInstanceUID }}">
+                                <button type="submit">Retrieve anfordern (C-MOVE)</button>
+                            </form>
+                            <div class="protocol-note" style="margin-top:6px;">
+                                Schritt 7: Workstation sagt dem PACS „schick mir diese Studie“. Das PACS startet dann <code>C-STORE</code> zurück zur Workstation (siehe Cache unten).
+                            </div>
+                        </td>
+                        <td style="white-space: nowrap;">
+                            {% if can_open %}
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <a href="/pacs/open_by_uid?study_uid={{ study.StudyInstanceUID }}"><button type="button" style="background:#1565c0;">Öffnen</button></a>
+                                    <a href="/pacs/open_first_instance_by_uid?study_uid={{ study.StudyInstanceUID }}"><button type="button" style="background:#455a64;">Metadaten</button></a>
+                                </div>
+                            {% else %}
+                                <div class="protocol-note">Erst <code>C-MOVE</code> anfordern, dann öffnen.</div>
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button type="button" disabled style="background:#9e9e9e; cursor:not-allowed;">Öffnen</button>
+                                    <button type="button" disabled style="background:#9e9e9e; cursor:not-allowed;">Metadaten</button>
+                                </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
         {% else %}
         <p><i>Keine Studien im PACS gefunden oder Verbindungsproblem.</i></p>
         <p><a href="/viewer"><button>Aktualisieren (Suchen)</button></a></p>
@@ -407,8 +425,102 @@ flowchart TB
     </div>
 
     <div class="section cache">
-        <h2>2. Lokaler Cache (Empfangene Bilder)</h2>
-        <p>Bilder, die erfolgreich per C-MOVE vom PACS an diese Workstation übertragen wurden.</p>
+        <h2>7. DICOM C-MOVE: Retrieve + Empfang (C-STORE)</h2>
+        <p>Bilder, die erfolgreich per C-MOVE angefordert und vom PACS per C-STORE an diese Workstation übertragen wurden.</p>
+
+        <div class="protocol-note" style="margin-top:6px;">
+            ℹ️ Falls nach dem Anfordern noch nichts erscheint: kurz warten und dann oben die Studienliste oder diese Seite aktualisieren. Der Transfer läuft asynchron.
+        </div>
+
+        <div class="protocol-note" style="margin-top:10px;">
+            <strong>Optional (nach Schritt 7): HL7 ORU^R01 – Befundung (Workstation → RIS)</strong><br>
+            Der Befund wird typischerweise erst <em>nachdem</em> Bilder empfangen wurden erstellt. (Nicht zu verwechseln mit Schritt 2: ORU-Laborwert aus dem LIS.)
+        </div>
+
+        {% set received_studies = received_studies|default([]) %}
+        {% if received_studies and received_studies|length > 0 %}
+            <div style="margin-top:10px;">
+                <div style="font-weight:700; margin-bottom:6px;">Empfangene Studien (gruppiert)</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Letzter Empfang</th>
+                            <th>Patient</th>
+                            <th>Modalitäten</th>
+                            <th>Anzahl Instanzen</th>
+                            <th>StudyInstanceUID</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for s in received_studies %}
+                            <tr>
+                                <td>{{ s.LastTimestamp }}</td>
+                                <td>{{ s.PatientName }} ({{ s.PatientID }})</td>
+                                <td>{{ s.Modalities }}</td>
+                                <td>{{ s.Count }}</td>
+                                <td style="font-family: monospace;">{{ s.StudyInstanceUID }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <form action="/workstation/report" method="post" style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                <div>
+                    <label style="display:block; font-weight:600; margin-bottom:4px;">Empfangene Studie</label>
+                    <select name="study_uid" required style="padding:8px; border:1px solid #ddd; border-radius:6px; min-width: 320px;">
+                        {% for s in received_studies %}
+                            <option value="{{ s.StudyInstanceUID }}">{{ s.PatientName }} ({{ s.PatientID }}) — {{ s.Modalities }} — {{ s.Count }} Instanzen</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="flex:1; min-width: 320px;">
+                    <label style="display:block; font-weight:600; margin-bottom:4px;">Befundtext (Kurz)</label>
+                    <textarea name="report_text" rows="3" placeholder="z.B. Kein Hinweis auf akute Blutung. ..." style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;"></textarea>
+                </div>
+                <div>
+                    <button type="submit">Befund senden (HL7 ORU^R01)</button>
+                </div>
+            </form>
+        {% else %}
+            <div class="protocol-note" style="margin-top:8px;">
+                Erst Bilder empfangen (C-STORE), dann Befund möglich.
+            </div>
+        {% endif %}
+
+        {% if last_workstation_oru_hl7 %}
+            <div style="margin-top:10px;">
+                <div style="font-weight:700; margin-bottom:6px;">Letzte HL7 ORU^R01 Nachricht (Workstation → RIS)</div>
+                <pre style="white-space:pre-wrap; background:#fff; border:1px solid #ddd; border-radius:8px; padding:10px;">{{ last_workstation_oru_hl7 }}</pre>
+            </div>
+        {% endif %}
+
+        {% set reports = reports|default([]) %}
+        {% if reports and reports|length > 0 %}
+            <div style="margin-top:10px;">
+                <div style="font-weight:700; margin-bottom:6px;">Gespeicherte Befunde (pro SuS-Code)</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Zeitpunkt</th>
+                            <th>Patient</th>
+                            <th>StudyInstanceUID</th>
+                            <th>Text</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in reports|reverse %}
+                            <tr>
+                                <td>{{ r.created_at }}</td>
+                                <td>{{ r.PatientName }} ({{ r.PatientID }})</td>
+                                <td style="font-family: monospace;">{{ r.StudyInstanceUID }}</td>
+                                <td>{{ r.text }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
         
         <table>
             <thead>

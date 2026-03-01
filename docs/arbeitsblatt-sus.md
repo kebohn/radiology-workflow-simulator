@@ -43,11 +43,11 @@ Merksatz: **ADT = Patient**, **ORU = Labor**, **ORM = Auftrag**.
 
 Notiere:
 - Welche Eingaben sind Stammdaten?
-- Warum muessen sie spaeter in DICOM-Tags wieder auftauchen?
+- Warum müssen sie später in DICOM-Tags wieder auftauchen?
 
-### 1b) LIS: Kreatinin pruefen (HL7 ORU)
+### 1b) LIS: Kreatinin prüfen (HL7 ORU)
 
-1) Klicke auf **"LIS Abfragen (Kreatinin)"**.
+1) Klicke auf **"RIS → LIS: Kreatinin anfordern"**.
 2) Lies Kreatinin-Wert und Status.
 3) Scrolle zur angezeigten HL7-Nachricht.
 
@@ -78,62 +78,89 @@ OBR|1|ACC001||CT^CT Abdomen
 
 ---
 
-## Aufgabe 2: Modalitaet (CT) holt Worklist (DICOM C-FIND / MWL)
+## Aufgabe 2: Modalität (CT) holt Worklist (DICOM C-FIND / MWL)
 
 1) Wechsle zur CT-Seite.
 2) Klicke auf **Worklist abrufen (DICOM C-FIND)**.
 
 Beobachte:
 - Welche Patientendaten kommen aus der Worklist?
-- Welche ID verknuepft Auftrag/Accession aus HL7 mit der DICOM Worklist?
+- Welche ID verknüpft Auftrag/Accession aus HL7 mit der DICOM Worklist?
 
 ---
 
 ## Aufgabe 3: CT-Scan (DICOM C-STORE) – echte DICOM-Dateien senden
 
-1) Waehle einen Worklist-Eintrag aus (falls die UI das anbietet).
+1) Wähle einen Worklist-Eintrag aus (falls die UI das anbietet).
 2) Lade echte DICOM-Dateien hoch (mehrere Dateien oder ZIP).
 3) Starte den Upload/Transfer (C-STORE).
 
 Beobachte:
 - Wie viele Dateien wurden gesendet?
-- Gab es "skipped" oder "failed" Dateien? Was koennte der Grund sein?
+- Gab es "skipped" oder "failed" Dateien? Was könnte der Grund sein?
 
 ---
 
 ## Aufgabe 4: PACS Check – DICOM Metadaten + Viewer (gefiltert)
 
-1) Oeffne im Simulator die Seite **/pacs**.
+1) Öffne im Simulator die Seite **/pacs**.
 2) Klicke bei deiner Studie auf **Metadata**.
 3) Klicke auf **Viewer**, um die Bilder anzusehen.
 
-Pruefe diese Tags:
+Prüfe diese Tags:
 - (0010,0010) `PatientName`
 - (0010,0020) `PatientID`
 - (0008,0050) `AccessionNumber`
 - (0008,0060) `Modality`
 - (0020,000D) `StudyInstanceUID`
 
+### 4b) (Optional) Abgeleitete Serie: "Segmentation (simulated)"
+
+1) Öffne in **/pacs** eine Serie deiner Studie.
+2) Klicke auf **"Segmentation (simulated) erzeugen"**.
+3) Prüfe danach in der Serienansicht, ob eine neue (abgeleitete) Serie entstanden ist.
+
+Notiere:
+- Woran erkennst du eine neue Serie (z.B. neue `SeriesInstanceUID`, andere `SeriesDescription`)?
+
 ---
 
 ## Aufgabe 5: Workstation – Studien suchen (DICOM C-FIND Study Root)
 
-1) Oeffne die Workstation/Viewer-Seite.
+1) Öffne die Workstation/Viewer-Seite.
 2) Schau dir die Trefferliste an.
 
 Notiere:
-- Welche Spalten siehst du (Patient, Datum, Modalitaet)?
+- Welche Spalten siehst du (Patient, Datum, Modalität)?
 - Findest du deinen Patienten wieder?
 
 ---
 
-## Aufgabe 6: Retrieve (DICOM C-MOVE) + Empfang (DICOM C-STORE Rueckkanal)
+## Aufgabe 6: Retrieve (DICOM C-MOVE) + Empfang (DICOM C-STORE Rückkanal)
 
-1) Waehle eine Studie aus und starte **Retrieve (C-MOVE)**.
+1) Wähle eine Studie aus und starte **Retrieve (C-MOVE)**.
 2) Warte kurz und beobachte die Empfangsliste.
 
 Notiere:
-- Warum ist C-MOVE ein "Pull", fuehrt aber zu einem "Push" ueber den C-STORE Rueckkanal?
+- Warum ist C-MOVE ein "Pull", führt aber zu einem "Push" über den C-STORE Rückkanal?
+
+---
+
+## Aufgabe 7 (Optional): Befundung auf der Workstation (HL7 ORU^R01)
+
+Voraussetzung: Du hast in Aufgabe 6 Bilder empfangen (C-STORE Cache ist nicht leer).
+
+1) Öffne die Workstation-Seite.
+2) Wähle im Bereich "Empfangene Studien" eine Studie aus.
+3) Schreibe einen kurzen Befundtext.
+4) Klicke auf **"Befund senden (HL7 ORU^R01)"**.
+5) Wechsle zum Dashboard und prüfe im Block **"RIS: Befunde (aus Workstation, HL7 ORU)"**:
+	- Ist ein Eintrag hinzugekommen?
+	- Kannst du die HL7 Nachricht über **"HL7 anzeigen"** aufklappen?
+
+Notiere:
+- Welche Patientendaten tauchen in der ORU wieder auf?
+- Wo (grob) findest du die `StudyInstanceUID` im Text?
 
 ---
 
@@ -148,5 +175,5 @@ Notiere:
 - Studien suchen: ___
 - Retrieve: ___
 
-2) Was war fuer dich neu oder ueberraschend?
+2) Was war für dich neu oder überraschend?
 

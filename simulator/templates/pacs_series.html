@@ -378,6 +378,16 @@ flowchart TB
     <div style="height: 16px;"></div>
 
     <div class="panel">
+      <h2>Aktionen</h2>
+      <p class="note">Erzeuge eine zusätzliche, abgeleitete Serie (simuliert). Das ist <strong>kein</strong> echtes DICOM-SEG Objekt, sondern eine didaktische "Derived Series" mit neuem <code>SeriesInstanceUID</code>.</p>
+      <form method="post" action="/pacs/series/{{ series.get('ID') }}/derive_seg" onsubmit="return confirm('Derived Series erzeugen? (Kann kurz dauern)');">
+        <button class="btn secondary" type="submit">Segmentation (simulated) erzeugen</button>
+      </form>
+    </div>
+
+    <div style="height: 16px;"></div>
+
+    <div class="panel">
       <h2>Instanzen</h2>
       {% if instances and instances|length > 0 %}
         <table>

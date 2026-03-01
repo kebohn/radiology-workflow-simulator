@@ -2,6 +2,13 @@
 <html lang="de">
 <head>
     <title>Radiologie Workflow Simulator</title>
+    {% set patients = patients | default([]) %}
+    {% set ris_reports_by_pid = ris_reports_by_pid | default({}) %}
+    {% set ris_reports = ris_reports | default([]) %}
+    {% set last_adt_hl7 = last_adt_hl7 | default('') %}
+    {% set last_lis_request_hl7 = last_lis_request_hl7 | default('') %}
+    {% set last_oru_hl7 = last_oru_hl7 | default('') %}
+    {% set last_lis_summary = last_lis_summary | default(None) %}
     <style>
         * { box-sizing: border-box; }
         body { font-family: sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; }
@@ -71,11 +78,22 @@
 
         .tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; width: 100%; }
         .tile { background: #fff; border: 1px solid #cfd8dc; border-radius: 10px; padding: 12px; min-width: 0; }
+        .tile.wide { grid-column: 1 / -1; }
         .tile h3 { margin: 0 0 6px 0; font-size: 1.05em; }
         .tile p { margin-top: 0; }
         .tile .tile-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
         .tile .tile-actions button { white-space: nowrap; }
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+        .table-scroll {
+            overflow: auto;
+            border: 1px solid #cfd8dc;
+            border-radius: 8px;
+            background: #fff;
+        }
+        .table-scroll table { margin-top: 0; }
+        .table-scroll.large { max-height: 55vh; }
+        .table-scroll.medium { max-height: 40vh; }
 
         @media (max-width: 520px) {
             body { padding: 12px; }
@@ -391,8 +409,8 @@ flowchart TB
     </div>
 
     <div class="section">
-        <h2>1. Verwaltung (HL7): KIS, LIS, RIS</h2>
-        <p>In der Praxis sind <strong>KIS</strong> (Patientenaufnahme), <strong>LIS</strong> (Labor) und <strong>RIS</strong> (Radiologie-Auftrag) getrennte Systeme. Hier folgt der Ablauf bewusst strikt: erst Patient im KIS erfassen (HL7 ADT), dann RIS → LIS Anfrage, dann Auftrag im RIS (HL7 ORM).</p>
+        <h2>1–3. Verwaltung (HL7): KIS, LIS, RIS</h2>
+        <p>Nummerierung wie im Diagramm: <strong>1) HL7 ADT</strong> (KIS → RIS, Patient), <strong>2) HL7 ORU</strong> (RIS ↔ LIS, Labor/Kreatinin), <strong>3) HL7 ORM</strong> (RIS, Auftrag).</p>
         
         <script>
         function _selectedPatient() {
@@ -468,7 +486,7 @@ flowchart TB
 
                 // Workflow: ORU/ORM highlight
                 localStorage.setItem('workflowDrawerOpen', '1');
-                setWorkflowUi('2. RIS → LIS: Kreatinin anfordern (HL7)', '3. RIS: Auftrag freigeben (HL7 ORM)', 'ORU', 'ORM');
+                setWorkflowUi('2. HL7 ORU: RIS ↔ LIS (Kreatinin)', '3. HL7 ORM: Auftrag freigeben (RIS)', 'ORU', 'ORM');
             } catch (e) {
                 statusDiv.innerText = '❌ Fehler beim LIS Abruf: ' + e;
             }
@@ -481,7 +499,7 @@ flowchart TB
 
         <div class="tile-grid">
             <div class="tile">
-                <h3>KIS: Patientenaufnahme (HL7 ADT)</h3>
+                <h3>1) HL7 ADT: KIS → RIS (Patient aufnehmen)</h3>
                 <p class="protocol-note">Zuerst Stammdaten erfassen. Das löst ein <code>HL7 ADT</code> Event aus (sichtbar als Roh-Nachricht).</p>
 
                 <form action="/kis/register_patient" method="post">
@@ -504,31 +522,34 @@ flowchart TB
 
                 <div class="protocol-note" style="margin-top: 10px;">Erfasste Patienten (mit Aktualisieren neu laden):</div>
                 {% if patients and patients|length > 0 %}
-                    <table style="margin-top:6px;">
-                        <thead>
-                            <tr>
-                                <th>PID</th>
-                                <th>Name</th>
-                                <th>Zeit</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for p in patients %}
+                    <div class="table-scroll large">
+                        <table style="min-width: 720px;">
+                            <thead>
                                 <tr>
-                                    <td class="mono">{{ p.pid }}</td>
-                                    <td>{{ p.name }}</td>
-                                    <td class="mono">{{ p.updated_at or p.created_at }}</td>
+                                    <th>PID</th>
+                                    <th>Name</th>
+                                    <th>Zeit</th>
                                 </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {% for p in patients %}
+                                    <tr>
+                                        <td class="mono">{{ p.pid }}</td>
+                                        <td>{{ p.name }}</td>
+                                        <td class="mono">{{ p.updated_at or p.created_at }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="protocol-note" style="margin-top:6px;">Einträge: {{ patients|length }}</div>
                 {% else %}
                     <div class="protocol-note">Noch keine Patienten erfasst.</div>
                 {% endif %}
             </div>
 
             <div class="tile">
-                <h3>RIS: Anfrage an LIS (HL7)</h3>
+                <h3>2) HL7 ORU: RIS ↔ LIS (Kreatinin)</h3>
                 <p class="protocol-note">Nachdem der Patient erfasst ist, sendet das RIS eine Anfrage ans LIS. Das LIS antwortet mit einem Labor-Resultat (HL7 ORU).</p>
 
                 <label>Patient auswählen (aus KIS):</label>
@@ -560,8 +581,50 @@ flowchart TB
             </div>
 
             <div class="tile">
-                <h3>RIS: Auftrag (HL7 ORM)</h3>
+                <h3>3) HL7 ORM: RIS (Auftrag freigeben)</h3>
                 <p class="protocol-note">Auftrag freigeben und Worklist-Eintrag erzeugen (nach dem Laborwert).</p>
+
+                <div class="protocol-note" style="margin-top: 6px;">RIS Patientenliste (aus ADT übernommen):</div>
+                {% if patients and patients|length > 0 %}
+                    <div class="table-scroll medium">
+                        <table style="min-width: 820px;">
+                            <thead>
+                                <tr>
+                                    <th>PID</th>
+                                    <th>Name</th>
+                                    <th>Labor (Kreatinin)</th>
+                                    <th>RIS Befund</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in patients %}
+                                    {% set rr = ris_reports_by_pid.get(p.pid) %}
+                                    <tr>
+                                        <td class="mono">{{ p.pid }}</td>
+                                        <td>{{ p.name }}</td>
+                                        <td>
+                                            {% if last_lis_summary and last_lis_summary.pid == p.pid %}
+                                                <span style="color:{{ last_lis_summary.color }}; font-weight:700;">{{ last_lis_summary.value }} {{ last_lis_summary.unit }}</span>
+                                                <div class="protocol-note" style="margin-top:2px;">{{ last_lis_summary.status }}</div>
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if rr and (rr.get('count')|int) > 0 %}
+                                                ✅ Ja
+                                            {% else %}
+                                                — Nein
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="protocol-note">Noch keine Patienten im RIS sichtbar (erst ADT erfassen).</div>
+                {% endif %}
 
                 <form action="/create_order" method="post">
                     <label>Patientenname:</label>
@@ -578,6 +641,49 @@ flowchart TB
 
                     <button type="submit">RIS: Auftrag freigeben (HL7 ORM) + Worklist erstellen</button>
                 </form>
+            </div>
+
+            <div class="tile wide">
+                <h3>RIS: Befunde (aus Workstation, HL7 ORU)</h3>
+                <p class="protocol-note">Übersicht über Befunde, die auf der Workstation erstellt und als <code>HL7 ORU^R01</code> gespeichert wurden (pro SuS-Code).</p>
+
+                {% if ris_reports and ris_reports|length > 0 %}
+                    <div style="max-height: 260px; overflow:auto; border:1px solid #cfd8dc; border-radius:8px; background:#fff;">
+                        <table style="margin-top:0; min-width: 920px;">
+                            <thead>
+                                <tr>
+                                    <th>Zeitpunkt</th>
+                                    <th>Patient</th>
+                                    <th>StudyInstanceUID</th>
+                                    <th>Text</th>
+                                    <th>HL7</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in ris_reports|reverse %}
+                                    <tr>
+                                        <td class="mono">{{ r.created_at }}</td>
+                                        <td>{{ r.PatientName }} <span class="protocol-note">({{ r.PatientID }})</span></td>
+                                        <td class="mono">{{ r.StudyInstanceUID }}</td>
+                                        <td>{{ r.text }}</td>
+                                        <td style="min-width: 220px;">
+                                            {% if r.hl7 %}
+                                                <details>
+                                                    <summary style="cursor:pointer; user-select:none;">HL7 anzeigen</summary>
+                                                    <pre style="margin-top:6px; white-space:pre-wrap; background:#333; color:#0f0; padding:10px; border-radius:8px; font-size:0.8em; overflow:auto; max-height: 180px;">{{ r.hl7 }}</pre>
+                                                </details>
+                                            {% else %}
+                                                <span class="protocol-note">—</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="protocol-note">Noch keine Befunde vorhanden. (Erst in der Workstation nach Empfang erstellen.)</div>
+                {% endif %}
             </div>
         </div>
 
