@@ -164,7 +164,25 @@ Notiere:
 
 ---
 
-## Aufgabe 8: Fehlerfall-Training (Teamaufgabe)
+## Aufgabe 8: Status der Untersuchung (begonnen / abgeschlossen / befundet)
+
+Ziel: Du beobachtest im Dashboard, wie sich der **Status der Untersuchung** entlang des Workflows ändert.
+
+1) Gehe ins Dashboard (Hauptmenü).
+2) Suche in der RIS-Tabelle die Spalte **"Status Untersuchung"**.
+3) Beobachte den Status nach diesen Aktionen:
+	- Nach **Auftrag freigeben (HL7 ORM)**
+	- Nach **Scan / Bilder senden (DICOM C-STORE)**
+	- Nach **Befund senden (HL7 ORU^R01)**
+
+Notiere:
+- Welche Aktion setzt welchen Status?
+- Warum können "begonnen" und "abgeschlossen" im Simulator zeitlich sehr nah beieinander liegen?
+- Welche IDs helfen dir bei der eindeutigen Zuordnung (z.B. PID, Accession, StudyInstanceUID)?
+
+---
+
+## Aufgabe 9: Fehlerfall-Training (Teamaufgabe)
 
 Ziel: Ihr übt typische Situationen aus dem Alltag. Nutzt im Dashboard die Kachel **"Fehlerfälle (Training)"** oder den **Workflow-Drawer** als Checkliste.
 

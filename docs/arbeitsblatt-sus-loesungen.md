@@ -92,26 +92,41 @@ Hinweis: Das sind Musterlösungen. Je nach Daten (PID, Kreatinin, DICOM-Dateien)
 
 ---
 
-  ## Aufgabe 8: Fehlerfall-Training (Teamaufgabe)
+## Aufgabe 8: Status der Untersuchung (begonnen / abgeschlossen / befundet)
 
-  ### Fehlerfall A: Worklist ist leer
+- **Welche Aktion setzt welchen Status?**
+  - **Auftrag freigeben (HL7 ORM)** setzt: **"Auftrag freigegeben"**.
+  - **Scan / Bilder senden (DICOM C-STORE)** setzt zuerst **"Untersuchung begonnen"** und nach erfolgreichem Senden **"Untersuchung abgeschlossen"**.
+  - **Befund senden (HL7 ORU^R01)** setzt: **"Befundet"**.
+- **Warum können "begonnen" und "abgeschlossen" im Simulator zeitlich sehr nah beieinander liegen?**
+  - Weil der Scan als einzelne Aktion simuliert wird (ein Klick), und das Senden der Instanzen direkt danach erfolgt.
+- **Welche IDs helfen bei der eindeutigen Zuordnung?**
+  - **PID** (PatientID) für den Patienten.
+  - **Accession** (AccessionNumber) für den Auftrag/Worklist.
+  - **StudyInstanceUID** für die Studie (Bilder/Befund).
 
-  - **Welche zwei Voraussetzungen müssen erfüllt sein, damit ein Worklist-Eintrag sinnvoll erscheint?**
-    - Patient ist im KIS angelegt (HL7 ADT vorhanden, PID bekannt).
-    - Auftrag ist im RIS freigegeben (HL7 ORM) und hat eine Accession.
-  - **Welche Nummer ist für die Zuordnung Auftrag <-> Worklist besonders wichtig (Stichwort: Accession)?**
-    - Die **AccessionNumber** (DICOM (0008,0050)) bzw. die Auftragsnummer aus HL7.
+---
 
-  ### Fehlerfall B: C-MOVE ohne Empfang (Cache bleibt leer)
+## Aufgabe 9: Fehlerfall-Training (Teamaufgabe)
 
-  - **Zwei plausible Ursachen:**
-    - Transfer ist noch nicht fertig (C-MOVE ist asynchron) oder Seite wurde nicht aktualisiert.
-    - Technisch passt das Ziel nicht: Empfänger-AE Title/Host/Port stimmen nicht, oder das PACS kennt die Ziel-AE nicht, daher scheitert der C-STORE Rückkanal.
-    - (Alternativ ebenfalls plausibel) Falsche Studie ausgewählt (StudyInstanceUID passt nicht).
-  - **Welche einfache Prüfung zuerst (z.B. C-ECHO)?**
-    - C-ECHO (PACS erreichbar?) und danach die Konfiguration der Ziel-AE prüfen (AE Title/Port) bzw. ob der Store-SCP läuft.
+### Fehlerfall A: Worklist ist leer
 
-  ---
+- **Welche zwei Voraussetzungen müssen erfüllt sein, damit ein Worklist-Eintrag sinnvoll erscheint?**
+  - Patient ist im KIS angelegt (HL7 ADT vorhanden, PID bekannt).
+  - Auftrag ist im RIS freigegeben (HL7 ORM) und hat eine Accession.
+- **Welche Nummer ist für die Zuordnung Auftrag <-> Worklist besonders wichtig (Stichwort: Accession)?**
+  - Die **AccessionNumber** (DICOM (0008,0050)) bzw. die Auftragsnummer aus HL7.
+
+### Fehlerfall B: C-MOVE ohne Empfang (Cache bleibt leer)
+
+- **Zwei plausible Ursachen:**
+  - Transfer ist noch nicht fertig (C-MOVE ist asynchron) oder Seite wurde nicht aktualisiert.
+  - Technisch passt das Ziel nicht: Empfänger-AE Title/Host/Port stimmen nicht, oder das PACS kennt die Ziel-AE nicht, daher scheitert der C-STORE Rückkanal.
+  - (Alternativ ebenfalls plausibel) Falsche Studie ausgewählt (StudyInstanceUID passt nicht).
+- **Welche einfache Prüfung zuerst (z.B. C-ECHO)?**
+  - C-ECHO (PACS erreichbar?) und danach die Konfiguration der Ziel-AE prüfen (AE Title/Port) bzw. ob der Store-SCP läuft.
+
+---
 
 ## Reflexion (kurz) – Musterzuordnung
 

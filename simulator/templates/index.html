@@ -690,12 +690,14 @@ flowchart TB
                                     <th>PID</th>
                                     <th>Name</th>
                                     <th>Labor (Kreatinin)</th>
+                                    <th>Status Untersuchung</th>
                                     <th>RIS Befund</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for p in patients %}
                                     {% set rr = ris_reports_by_pid.get(p.pid) %}
+                                    {% set ex = p.get('last_exam') %}
                                     <tr>
                                         <td class="mono">{{ p.pid }}</td>
                                         <td>{{ p.name }}</td>
@@ -703,6 +705,28 @@ flowchart TB
                                             {% if last_lis_summary and last_lis_summary.pid == p.pid %}
                                                 <span style="color:{{ last_lis_summary.color }}; font-weight:700;">{{ last_lis_summary.value }} {{ last_lis_summary.unit }}</span>
                                                 <div class="protocol-note" style="margin-top:2px;">{{ last_lis_summary.status }}</div>
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if ex and ex.get('status') %}
+                                                {{ ex.get('status') }}
+                                                {% if ex.get('acc') %}
+                                                    <div class="protocol-note" style="margin-top:2px;">Accession: <span class="mono">{{ ex.get('acc') }}</span></div>
+                                                {% endif %}
+                                                {% if ex.get('desc') %}
+                                                    <div class="protocol-note">{{ ex.get('desc') }}</div>
+                                                {% endif %}
+                                                {% if ex.get('started_at') %}
+                                                    <div class="protocol-note">Begonnen: <span class="mono">{{ ex.get('started_at') }}</span></div>
+                                                {% endif %}
+                                                {% if ex.get('completed_at') %}
+                                                    <div class="protocol-note">Abgeschlossen: <span class="mono">{{ ex.get('completed_at') }}</span></div>
+                                                {% endif %}
+                                                {% if ex.get('reported_at') %}
+                                                    <div class="protocol-note">Befundet: <span class="mono">{{ ex.get('reported_at') }}</span></div>
+                                                {% endif %}
                                             {% else %}
                                                 —
                                             {% endif %}

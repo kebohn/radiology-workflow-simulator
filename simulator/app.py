@@ -290,6 +290,58 @@ def _upsert_patient(code: str, name: str, pid: str) -> None:
     _save_patients(code, patients)
 
 
+def _update_patient_last_exam(
+    code: str,
+    pid: str,
+    *,
+    accession_number: Optional[str] = None,
+    description: Optional[str] = None,
+    status: Optional[str] = None,
+) -> None:
+    """Update lightweight exam/order status for a patient (teaching aid).
+
+    Stored in patients_<code>.json under key 'last_exam' to keep things simple.
+    """
+    pid = (pid or '').strip()
+    if not pid:
+        return
+
+    patients = _load_patients(code)
+    now = datetime.datetime.now().isoformat(timespec='seconds')
+    changed = False
+    for p in patients:
+        if str((p or {}).get('pid') or '') != pid:
+            continue
+        ex = (p.get('last_exam') or {}) if isinstance(p, dict) else {}
+        if accession_number:
+            ex['acc'] = accession_number
+        if description:
+            ex['desc'] = description
+        if status:
+            ex['status'] = status
+        ex['updated_at'] = now
+
+        if status == 'Auftrag freigegeben':
+            ex['ordered_at'] = now
+            ex.pop('started_at', None)
+            ex.pop('completed_at', None)
+            ex.pop('reported_at', None)
+        elif status == 'Untersuchung begonnen' and not ex.get('started_at'):
+            ex['started_at'] = now
+        elif status == 'Untersuchung abgeschlossen' and not ex.get('completed_at'):
+            ex['completed_at'] = now
+        elif status == 'Befundet' and not ex.get('reported_at'):
+            ex['reported_at'] = now
+
+        p['last_exam'] = ex
+        p['updated_at'] = now
+        changed = True
+        break
+
+    if changed:
+        _save_patients(code, patients)
+
+
 def _hl7_timestamp() -> str:
     return datetime.datetime.now().strftime('%Y%m%d%H%M%S')
 
@@ -1423,6 +1475,13 @@ def create_order():
         )
     
     create_dicom_worklist_file(name, pid, acc, desc)
+    _update_patient_last_exam(
+        code,
+        pid,
+        accession_number=acc,
+        description=desc,
+        status='Auftrag freigegeben',
+    )
     ns = f" (SuS-Code: {code})" if code else ""
     msg = f"✅ Auftrag erfolgreich! HL7 ORM wurde simuliert und ein Worklist-Eintrag für '{name}' erstellt.{ns}"
     return render_template(
@@ -1458,6 +1517,10 @@ def scan():
     uploads = request.files.getlist('dicom_files') if request.files else []
     retag = request.form.get('retag') == 'on'
 
+    code = get_student_code()
+
+    _update_patient_last_exam(code, pid, accession_number=acc, status='Untersuchung begonnen')
+
     if uploads and any(u and u.filename for u in uploads):
         dicom_paths, temp_dir = _collect_dicom_file_paths_from_uploads(uploads)
         try:
@@ -1482,9 +1545,15 @@ def scan():
                 msg += " Details: " + " | ".join(summary["errors"][:3])
                 if len(summary["errors"]) > 3:
                     msg += f" (+{len(summary['errors']) - 3} weitere)"
+
+        if summary.get('ok', 0) > 0:
+            _update_patient_last_exam(code, pid, accession_number=acc, status='Untersuchung abgeschlossen')
     else:
         status = send_c_store(name, pid, acc)
         msg = f"☢️ Dummy-Scan für {name}. (Hinweis: Für echte Daten bitte DICOM-Dateien hochladen.) Status: {status}."
+
+        if status and getattr(status, 'Status', None) == 0x0000:
+            _update_patient_last_exam(code, pid, accession_number=acc, status='Untersuchung abgeschlossen')
 
     items = perform_c_find_mwl()
     return render_template(
@@ -2202,6 +2271,7 @@ def workstation_report():
         })
         reports = reports[-50:]
         _save_reports(code, reports)
+        _update_patient_last_exam(code, pid, status='Befundet')
 
     return render_template(
         'viewer.html',
