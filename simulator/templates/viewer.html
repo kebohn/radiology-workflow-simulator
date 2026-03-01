@@ -155,9 +155,23 @@
             }
 
             function workflowTraceAdd(currentText, nextText, activeNode, nextNode) {
+                const postToGetMap = {
+                    '/set_student': '/',
+                    '/kis/register_patient': '/',
+                    '/create_order': '/',
+                    '/echo': '/',
+                    '/retrieve': '/viewer',
+                    '/workstation/report': '/viewer',
+                };
+
+                let safePage = window.location.pathname + window.location.search;
+                if (postToGetMap[window.location.pathname]) {
+                    safePage = postToGetMap[window.location.pathname];
+                }
+
                 const entry = {
                     ts: new Date().toISOString(),
-                    page: window.location.pathname + window.location.search,
+                    page: safePage,
                     cur: currentText || '',
                     nxt: nextText || '',
                     a: activeNode || '',
@@ -200,8 +214,23 @@
                 host.innerHTML = items.map((it) => {
                     const when = (it.ts || '').replace('T', ' ').slice(0, 19);
                     const label = `${when} — ${it.cur || '—'} → ${it.nxt || '—'}`;
-                    const href = it.page || '/';
-                    return `<button type="button" data-href="${href}" style="width:100%; text-align:left; border:1px solid #cfd8dc; background:#fff; border-radius:8px; padding:6px 8px; margin:4px 0; cursor:pointer;">${label}</button>`;
+                    const rawHref = it.page || '/';
+                    let safeHref = rawHref;
+                    try {
+                        const u = new URL(rawHref, window.location.origin);
+                        const postToGetMap = {
+                            '/set_student': '/',
+                            '/kis/register_patient': '/',
+                            '/create_order': '/',
+                            '/echo': '/',
+                            '/retrieve': '/viewer',
+                            '/workstation/report': '/viewer',
+                        };
+                        if (postToGetMap[u.pathname]) safeHref = postToGetMap[u.pathname];
+                    } catch (e) {
+                        // ignore
+                    }
+                    return `<button type="button" data-href="${safeHref}" style="width:100%; text-align:left; border:1px solid #cfd8dc; background:#fff; color:#263238; border-radius:8px; padding:6px 8px; margin:4px 0; cursor:pointer;">${label}</button>`;
                 }).join('');
 
                 host.querySelectorAll('button[data-href]').forEach((btn) => {
