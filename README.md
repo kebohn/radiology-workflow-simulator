@@ -98,6 +98,15 @@ Wenn Sie möchten, kann ich daraus auch eine kurze **1-Seiten-Zusammenfassung** 
 
 ---
 
+## Entwicklung (lokal)
+
+- Runtime-Dependencies: `pip install -r requirements.txt`
+- Dev-Tools (Tests/Lint): `pip install -r requirements-dev.txt`
+- Tests: `python -m pytest`
+- Lint (Unused Imports/Fehler): `ruff check .`
+
+---
+
 ## Deployment (zentraler Server)
 
 Anleitung: [docs/deploy-central-server.md](docs/deploy-central-server.md)
