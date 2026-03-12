@@ -11,7 +11,7 @@ Hinweis: Das sind Musterlösungen. Je nach Daten (PID, Kreatinin, DICOM-Dateien)
 
 ---
 
-## Aufgabe 1: Verwaltung (HL7) in 3 Schritten: KIS, LIS, RIS
+## Aufgabe 1: Verwaltung (HL7) in 3 Schritten
 
 ### 1a) KIS: Patient aufnehmen (HL7 ADT)
 
@@ -107,7 +107,7 @@ Hinweis: Das sind Musterlösungen. Je nach Daten (PID, Kreatinin, DICOM-Dateien)
 
 ---
 
-## Aufgabe 9: Fehlerfall-Training (Teamaufgabe)
+## Aufgabe 9: Fehlerfall-Training
 
 ### Fehlerfall A: Worklist ist leer
 
@@ -128,7 +128,7 @@ Hinweis: Das sind Musterlösungen. Je nach Daten (PID, Kreatinin, DICOM-Dateien)
 
 ---
 
-## Reflexion (kurz) – Musterzuordnung
+## Reflexion (kurz)
 
 - Patient aufnehmen: **HL7 ADT**
 - Laborbefund: **HL7 ORU**

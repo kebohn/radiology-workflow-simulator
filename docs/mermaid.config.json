@@ -1,0 +1,13 @@
+{
+  "securityLevel": "loose",
+  "htmlLabels": false,
+  "flowchart": {
+    "htmlLabels": false,
+    "curve": "stepAfter",
+    "nodeSpacing": 40,
+    "rankSpacing": 50
+  },
+  "themeVariables": {
+    "fontFamily": "DejaVu Sans, Arial, sans-serif"
+  }
+}
