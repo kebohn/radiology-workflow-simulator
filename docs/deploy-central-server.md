@@ -81,7 +81,47 @@ Dann `.env` editieren (mindestens `FLASK_SECRET_KEY` und `ADMIN_PASSHASH` setzen
 
 Wichtig für HTTPS (Reverse Proxy):
 - Setze `SIM_DOMAIN` auf einen Hostnamen, z.B. `sim.example.org`.
-- Ohne eigene Domain kannst du `sim.<SERVER-IP>.sslip.io` verwenden.
+
+### DNS (Cloudflare) fuer `orthanc.bohn-teaching.org`
+
+Wenn du Cloudflare als DNS-Provider nutzt und die App auf AWS (z.B. EC2) laeuft:
+
+1) DNS Record anlegen (Cloudflare Dashboard -> **DNS**)
+
+- **Type**: `A`
+- **Name**: `orthanc`
+- **IPv4 address**: `<DEINE_PUBLIC_IP>` (EC2 Public IPv4 / Elastic IP)
+- **Proxy status**: fuer die erste Inbetriebnahme am einfachsten **DNS only** (graue Wolke)
+
+Optional (wenn du auch IPv6 hast):
+- **Type**: `AAAA` mit deiner Public IPv6
+
+2) Sobald `https://orthanc.bohn-teaching.org` funktioniert, kannst du (optional) wieder auf **Proxied** (orange Wolke) schalten.
+
+Hinweise:
+- In AWS muessen in der Security Group Inbound Rules fuer **80/tcp** und **443/tcp** offen sein.
+- Wenn du Cloudflare Proxy nutzt: Stelle unter **SSL/TLS** den Modus auf **Full (strict)** (nachdem Caddy erfolgreich ein Zertifikat bezogen hat).
+- Vermeide Cloudflare-Optionen wie **Always Use HTTPS** / HSTS waehrend der allerersten ACME/Let's-Encrypt Einrichtung, falls du unerwartete Redirect/Challenge-Probleme siehst.
+
+Hinweis Schulnetz / FortiGate:
+- Dienste wie `sslip.io` werden oft als **Dynamic DNS** kategorisiert und in Schulnetzen (FortiGate) standardmäßig blockiert.
+- Wenn SuS aus dem Schulnetz zugreifen sollen, verwende besser **eine „normale“ Domain** (eigene Domain oder Subdomain der Schule), die per DNS A/AAAA auf die Server-IP zeigt.
+
+Ohne eigene Domain (Fallback):
+- Du kannst die App auch über die **öffentliche IP** aufrufen. Das ist dann typischerweise **nur HTTP** (kein öffentliches Let's-Encrypt-TLS): `http://<SERVER-IP>/`
+  - Stelle sicher, dass im Firewall/Security-Group **80/tcp erlaubt** ist.
+  - Viele Browser/Schulnetze erzwingen HTTPS ("HTTPS-Only"). Wenn dein Browser automatisch auf `https://<SERVER-IP>/` springt, funktioniert das ohne echte Domain meistens nicht.
+  - Empfehlung: Für Unterrichtsbetrieb besser eine echte Domain nutzen.
+
+### Wenn HTTPS erzwungen wird (HTTPS-Only)
+
+Wenn euer Schulnetz oder eure Browser-Richtlinie **HTTPS erzwingt**, ist ein reiner IP-Zugriff praktisch nicht mehr nutzbar:
+- Für `https://<PUBLIC-IP>/` bekommst du üblicherweise **kein** öffentlich vertrauenswürdiges TLS-Zertifikat (Let's Encrypt stellt in der Regel keine IP-Zertifikate aus).
+
+Dann bleiben realistisch diese Optionen:
+- **Echte Domain / Schul-Subdomain nutzen** (empfohlen): DNS A/AAAA → Server-IP, `SIM_DOMAIN=sim.example.org`.
+- **IT-Ausnahme**: Zugriff auf `http://<PUBLIC-IP>/` erlauben bzw. HTTPS-Only für diese URL deaktivieren.
+- **Geräte verwalten** (nur wenn ihr volle Kontrolle habt): eigene CA / Zertifikat verteilen (deutlich mehr Aufwand).
 
 Tipp für `FLASK_SECRET_KEY`:
 
@@ -153,6 +193,11 @@ Warum Subdomain (statt `/orthanc`)? Orthancs Web-UI nutzt an vielen Stellen abso
 
 - `ORTHANC_DOMAIN=orthanc.example.org`
 
+Wichtig:
+- Wenn `ORTHANC_DOMAIN` **nicht** gesetzt ist, faellt das Setup auf den Default `orthanc.localhost` zurueck.
+  Das ist nur fuer lokale Tests gedacht; extern im Browser fuehrt das oft zu TLS/SSL-Fehlern.
+  In `docker logs caddy` solltest du spaeter unter "domains" deine echten FQDNs sehen (z.B. `pacs.example.org`).
+
 3) Setze einen Basic-Auth-Zugang (damit Orthanc nicht offen im Internet steht):
 
 - `ORTHANC_PROXY_USER=admin`
@@ -165,6 +210,9 @@ Hash erzeugen:
 4) Stack neu starten:
 
 `docker compose -f docker-compose.server.yml up -d`
+
+Wenn du den Wert in `.env` geaendert hast und Caddy den Host immer noch nicht kennt:
+- erzwinge ein Recreate von Caddy: `docker compose -f docker-compose.server.yml up -d --force-recreate caddy`
 
 Danach ist Orthanc unter `https://orthanc.example.org` erreichbar (Browser fragt nach Basic Auth).
 
