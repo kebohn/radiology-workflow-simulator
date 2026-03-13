@@ -7,27 +7,27 @@ classDef hl7 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#000
 classDef dicom fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
 
 %% Bereiche / Systeme
-subgraph Verwaltung["🏥 Verwaltung (KIS / RIS / LIS)"]
+subgraph Verwaltung["Verwaltung (KIS / RIS / LIS)"]
     direction LR
-    KIS["🖥️ KIS\n(Patientenaufnahme)"]
-    RIS["📋 RIS\n(Radiologie-Auftrag)"]
-    LIS["🧪 LIS\n(Labor)"]
+    KIS["KIS\n(Patientenaufnahme)"]
+    RIS["RIS\n(Radiologie-Auftrag)"]
+    LIS["LIS\n(Labor)"]
 end
 
-subgraph Backend["💾 Backend (Orthanc)"]
+subgraph Backend["Backend (Orthanc)"]
     direction LR
-    MWLServer["📋 Worklist-Server (MWL)\n(Terminliste für Modalitäten)"]
-    PACS["📦 PACS-Archiv\n(Bilder + Studien)"]
+    MWLServer["Worklist-Server (MWL)\n(Terminliste)"]
+    PACS["PACS-Archiv\n(Bilder + Studien)"]
 end
 
-subgraph Untersuchung["☢️ Untersuchungsraum"]
+subgraph Untersuchung["Untersuchungsraum"]
     direction TB
-    Modality["☢️ CT Scanner\n(Modalität)"]
+    Modality["CT Scanner\n(Modalitaet)"]
 end
 
-subgraph Befundung["👨‍⚕️ Befundung"]
+subgraph Befundung["Befundung"]
     direction TB
-    Workstation["🖥️ Workstation\n(Viewer)"]
+    Workstation["Workstation\n(Viewer)"]
 end
 
 %% Prozess-Schritte als eigene Knoten (damit Text nicht auf Linien liegt)

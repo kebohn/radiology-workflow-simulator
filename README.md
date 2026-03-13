@@ -117,6 +117,15 @@ Die komplette Aufgabenbeschreibung für Lernende ist zentral im Arbeitsblatt:
 
 - [docs/arbeitsblatt-sus.md](docs/arbeitsblatt-sus.md)
 
+## PDF-Export (optional)
+
+Wenn Sie das Arbeitsblatt als PDF brauchen (z.B. zum Ausdrucken), können Sie es mit Pandoc + XeLaTeX rendern:
+
+- Arbeitsblatt:
+  - `pandoc --from=markdown --number-sections --pdf-engine=xelatex --resource-path=docs -V documentclass=article -V fontsize=11pt -V papersize=a4 -V geometry:margin=2.5cm -V mainfont="DejaVu Serif" -V monofont="DejaVu Sans Mono" -V colorlinks=true -V linkcolor=black -V urlcolor=black -o docs/arbeitsblatt-sus.pdf docs/arbeitsblatt-sus.md`
+- Lösungen:
+  - `pandoc --from=markdown --number-sections --pdf-engine=xelatex --resource-path=docs -V documentclass=article -V fontsize=11pt -V papersize=a4 -V geometry:margin=2.5cm -V mainfont="DejaVu Serif" -V monofont="DejaVu Sans Mono" -V colorlinks=true -V linkcolor=black -V urlcolor=black -o docs/arbeitsblatt-sus-loesungen.pdf docs/arbeitsblatt-sus-loesungen.md`
+
 ## Technische Details für Dozenten
 
 - **Orthanc**: Läuft auf Ports 4242 (DICOM) und 8042 (HTTP).
